@@ -4,8 +4,10 @@ Three stages, run in order. Each stage's steps are idempotent and resumable —
 a crash or reboot mid-run costs you the current item, not the whole stage,
 because progress is tracked in a `jobs` table in SQLite.
 
-Everything reads and writes one database, `work/corpus.db`. Keep `work/` on a
-fast local filesystem (on WSL, use ext4 inside the distro, **not** a `/mnt/`
+Each project reads and writes one database, `work/<project>/corpus.db` (e.g.
+`work/archer_wot/corpus.db`). Every stage takes `--project <name>`, resolved
+against `projects/<name>/config.py` (see `pipeline/project.py`). Keep `work/` on
+a fast local filesystem (on WSL, use ext4 inside the distro, **not** a `/mnt/`
 drive — see `gotchas.md`).
 
 ---
@@ -15,10 +17,12 @@ drive — see `gotchas.md`).
 Builds the searchable corpus. Four sub-steps, all sharing one job queue.
 
 ### `scan <video_dir>`
-Discovers video files, parses `SxxExx` season/episode from filenames, populates
-the `episodes` table. **Filenames must contain a parseable `SxxExx`** (or `NxNN`)
-or provenance is lost. Rename before scanning; the command warns on any file it
-can't parse.
+Discovers video files, extracts provenance from each filename via the project's
+`parse()` (for `archer_wot`, `SxxExx` → season/episode), populates the
+`episodes` table with `group_idx`/`item_idx`. **Filenames must parse** or
+provenance is lost — rename before scanning; the command warns on any file
+`parse()` returns `(None, None)` for. Provenance is just two orderable ints;
+what they mean is the project's business.
 
 ### `demux`  *(CPU)*
 ffmpeg extracts a 16 kHz mono WAV per episode. ~10 s/episode. This is the only
@@ -33,8 +37,8 @@ Output: one JSON per episode. Loads models once, processes all episodes in a
 single pass.
 
 ### `diarize`  *(GPU)*
-pyannote clusters voices *within each episode* → every word tagged
-`SPEAKER_00`, `SPEAKER_01`, etc. **These labels are episode-local** — `SPEAKER_00`
+pyannote clusters voices *within each item* → every word tagged
+`SPEAKER_00`, `SPEAKER_01`, etc. **These labels are item-local** — `SPEAKER_00`
 in one episode is unrelated to `SPEAKER_00` in another. Stage 2 turns them into
 global names. Also captures pyannote's per-cluster embeddings for free (see
 `gotchas.md` — this is a deliberate optimization).
@@ -68,8 +72,10 @@ Serve `work/` over HTTP and open the tagger. Play a line, click the character.
 **Approve clean lines, skip only misfiled ones.** Because you tag individual
 utterances, a merged cluster (two people under one label) costs you one skip per
 bad line instead of the whole cluster. Aim for **12+ approved lines per
-character across 3+ era-bands** (voices drift over a long-running show; a centroid
-built on one era underperforms on others). Export `refs.json`.
+character, spread across your project's bands** (voices drift over a long-running
+show; a centroid built on one era underperforms on others). A project with no
+`BANDS` uses one implicit band, so this reduces to "12+ lines per character."
+Export `refs.json`.
 
 ### `embed <refs.json>`  *(GPU)*
 Neural-embeds every approved line, averages per character into 8 (or N)
@@ -93,11 +99,12 @@ write the `character` column onto every utterance.
 ## Stage 3 — Match (`03_match.py`)
 
 Ranks attributed lines against a list of pools, each wired to one or more
-real target game events (see `wot_events.py`).
+real target game events (see the project's `POOLS`, e.g.
+`projects/archer_wot/config.py`).
 
 ### `events`
-Loads/prints the pool definitions (edit the `POOLS` list in `wot_events.py`,
-not `03_match.py` itself). Each pool has: keywords (for FTS), a
+Loads/prints the pool definitions (edit the `POOLS` list in
+`projects/<name>/config.py`, not `03_match.py` itself). Each pool has: keywords (for FTS), a
 natural-language description (for semantic search), an optional suggested
 character (a hint, not a filter), and a list of real target game event IDs
 that pool is wired to. A pool maps to *multiple* game events on purpose —
@@ -135,9 +142,10 @@ has no literal equivalent — you match on *energy*, looser.
 
 ## Schema (the important tables)
 
-- `episodes` — one row per source file; season/episode, paths, duration.
+- `episodes` — one row per source file; `group_idx`/`item_idx` (ordered
+  provenance, e.g. season/episode), paths, duration.
 - `utterances` — the corpus. Transcript, timestamps, duration, `speaker`
-  (episode-local), `character` (global, from Stage 2), word count.
+  (item-local), `character` (global, from Stage 2), word count.
 - `utterances_fts` — FTS5 mirror of `utterances.text`.
 - `centroids` — per-character voiceprint vectors.
 - `clusters` — per-cluster assignment + similarity.

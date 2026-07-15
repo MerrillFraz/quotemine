@@ -1,15 +1,18 @@
 # Tuning
 
-All knobs live as constants at the top of each stage script. Defaults were tuned
-on a 14-season animated series on a 12 GB RTX 3080; your corpus and card will
-differ. Re-run cost is noted per knob.
+Per-corpus knobs live in your project's `TUNING` dict
+(`projects/<name>/config.py`); the defaults they fall back to are in
+`pipeline/project.py` (`DEFAULT_TUNING`). Only hardware/model knobs (batch size,
+compute type, model names) stay at the top of the stage scripts. The names below
+are the `TUNING` keys. Defaults were tuned on a 14-season animated series on a
+12 GB RTX 3080; your corpus and card will differ. Re-run cost is noted per knob.
 
 ---
 
 ## Stage 1 — Index
 
 ### `MAX_SPEAKERS` (diarize)
-The single most consequential knob. Set it **close to the real per-episode
+The single most consequential knob. Set it **close to the real per-item
 speaker ceiling** for your source.
 - Too high → 6–15x slower diarization for identical results (wasted search).
 - Too low → silent speaker merges (see `gotchas.md`).
@@ -70,8 +73,9 @@ good balance; averaging is what rescues short-clip embedding noise.
 ## Stage 3 — Match
 
 ### The `POOLS` list
-The main thing you'll edit — lives in `wot_events.py`, not `03_match.py`
-itself. Each pool = keywords + description + suggested character + a list of
+The main thing you'll edit — lives in your project's config
+(`projects/<name>/config.py`), alongside `TUNING`. Each pool = keywords +
+description + suggested character + a list of
 real target game event IDs it's wired to. A pool maps to *multiple* game
 events on purpose: downstream, each pool becomes one Random Container wired
 to fire on every event mapped to it. **Reconcile the game event IDs against
