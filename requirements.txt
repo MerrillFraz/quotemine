@@ -1,4 +1,4 @@
-# Runtime dependencies for voiceover-pipeline.
+# Runtime dependencies for Quotemine.
 #
 # IMPORTANT — install torch FIRST, from the PyTorch index, BEFORE this file:
 #

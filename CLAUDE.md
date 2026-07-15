@@ -1,4 +1,4 @@
-# CLAUDE.md — voiceover-pipeline
+# CLAUDE.md — Quotemine
 
 Generic pipeline: video archive → speaker-attributed searchable line
 database → event-matched candidate lists → auditioned, cleaned, packaged

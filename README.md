@@ -1,4 +1,4 @@
-# voiceover-pipeline
+# Quotemine
 
 Turn an archive of video (a TV series, a film set, a game's cutscenes — anything
 with recurring speakers) into a **searchable, speaker-attributed,
