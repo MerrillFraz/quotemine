@@ -168,13 +168,17 @@ def cmd_match(args, db):
         cand = {ids[k]: float(sims[k]) for k in order}
 
         kw_ids = set()
+        # A pool may legitimately carry no keywords — e.g. a mechanical event
+        # with no literal dialogue, matched on the semantic "vibe" alone. An
+        # empty FTS5 MATCH is a syntax error, so skip the keyword pass entirely.
         terms = " OR ".join(f'"{w}"' for w in p["keywords"].split())
-        for r in db.execute(
-            "SELECT u.id FROM utterances u "
-            "WHERE u.character IS NOT NULL AND u.duration_s BETWEEN ? AND ? "
-            "AND u.id IN (SELECT rowid FROM utterances_fts WHERE utterances_fts MATCH ?)",
-            (cand_min_s, cand_max_s, terms)):
-            kw_ids.add(r["id"])
+        if terms:
+            for r in db.execute(
+                "SELECT u.id FROM utterances u "
+                "WHERE u.character IS NOT NULL AND u.duration_s BETWEEN ? AND ? "
+                "AND u.id IN (SELECT rowid FROM utterances_fts WHERE utterances_fts MATCH ?)",
+                (cand_min_s, cand_max_s, terms)):
+                kw_ids.add(r["id"])
 
         rows = []
         for uid in (set(cand) | kw_ids):

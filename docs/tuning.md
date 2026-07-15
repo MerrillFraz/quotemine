@@ -90,13 +90,39 @@ don't have to match your target.
   our base" ranks far better than "base capture". Sharpen these using your
   target's own event descriptions if it has them.
 
+#### Match the vibe, not the verb
+Your source splits pools into two kinds (see `gotchas.md`):
+- **Personality** pools (taunt, victory, confusion, annoyance) — the source
+  overflows with these because they match how a character actually *talks*.
+  Description tuning pays off richly here.
+- **Mechanical** pools (reload, module-damaged, base-captured) — scripted
+  dialogue has no literal equivalent, so literal keywords rarely hit and even a
+  perfect description only reorders a thin set. **Don't chase a specific action
+  that isn't in your source.** Describe the emotional *vibe* — the tone a line
+  would carry — and accept looser scores: "sudden alarm, something just went
+  badly wrong" finds more usable lines than "engine destroyed".
+
+Tuning only ever *reorders the lines your source already contains* — it can't
+conjure a line that was never spoken (no re-indexing happens; the corpus is
+fixed and line embeddings are cached). So aim description effort at pools where
+the material actually exists.
+
+A mechanical pool with no useful literal terms may leave `keywords` empty
+(`""`); the keyword pass is skipped and the pool matches on description alone.
+
+**Re-tune loop (cheap):** edit the pool, then run `events` (reloads the pool
+table from your config) and `match`. Forgetting `events` re-ranks against the
+*old* descriptions — a common gotcha.
+
 ### `TOP_SEMANTIC` (default 60)
 How many semantic hits to keep per pool. Raise for more candidates to audition,
 lower for a tighter list. Re-run cost: instant (embeddings cached).
 
-### `KW_BONUS` (default 0.15)
+### `KW_BONUS` (default 0.08)
 How much a keyword hit boosts a line's combined score above its raw semantic
-score. Raise to favor literal matches, lower to trust semantics more.
+score. Raise to favor literal matches, lower to trust semantics more. Keep it
+small relative to the semantic score range (~0.3–0.6) so a keyword hit on a
+filler word can't outrank a genuinely better semantic match.
 
 ### Candidate window (`CAND_MIN_S` / `CAND_MAX_S`)
 Duration filter for what's eligible as a candidate. Match this to your output's
