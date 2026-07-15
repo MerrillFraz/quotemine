@@ -537,7 +537,7 @@ def cmd_status(args, db):
 
 def main():
     p = argparse.ArgumentParser(description="Episode corpus indexer (Stages 1-4).")
-    p.add_argument("--workdir", default=str(Path.home() / "archer-vp" / "work"),
+    p.add_argument("--workdir", default=str(Path(__file__).resolve().parent.parent / "work"),
                    help="Working dir. Keep this on ext4, NOT under /mnt/.")
     sub = p.add_subparsers(dest="cmd", required=True)
 

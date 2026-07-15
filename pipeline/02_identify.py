@@ -55,7 +55,7 @@ MIN_SNR_DB = 8.0             # per-line cleanliness floor
 CLUSTER_EMBED_UTTS = 12      # isolated lines averaged to form each cluster's target vector
 DEFAULT_THRESHOLD = 0.50
 
-WORKDIR_DEFAULT = str(Path.home() / "archer-vp" / "work")
+WORKDIR_DEFAULT = str(Path(__file__).resolve().parent.parent / "work")
 
 
 def connect(workdir):
@@ -196,7 +196,7 @@ def cmd_sample(args, db):
     (Path(args.workdir) / "tagger_utt.html").write_text(build_tagger([dict(r) for r in rows]))
 
     print(f"\n[sample] {uid} individual utterances across {len(set((r['episode_id'],r['speaker']) for r in rows))} clusters")
-    print("  cd ~/archer-vp/work && python -m http.server 8000")
+    print("  cd work && python -m http.server 8000")
     print("  open http://localhost:8000/tagger_utt.html")
 
 

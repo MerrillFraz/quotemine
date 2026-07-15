@@ -55,7 +55,7 @@ def embed_pyannote(inf, sig, sr):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--workdir", default=str(Path.home() / "archer-vp" / "work"))
+    ap.add_argument("--workdir", default=str(Path(__file__).resolve().parent.parent / "work"))
     ap.add_argument("--season", type=int, required=True)
     ap.add_argument("--episode", type=int, required=True)
     ap.add_argument("--speaker", required=True)
