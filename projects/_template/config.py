@@ -65,6 +65,10 @@ TUNING = {
     # "MAX_SPEAKERS": 8,
     # "LANGUAGE": "en",
     # "MIN_SNR_DB": 8.0,
+    # Downstream (stages 4-6):
+    # "AUDITION_TOP_N": 25,     # candidates per pool on the audition board
+    # "LOUDNORM_LUFS": -16.0,   # final loudness target
+    # "BANDPASS_HZ": (300, 3400),  # e.g. telephone band, or None
 }
 
 

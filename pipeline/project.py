@@ -60,6 +60,14 @@ DEFAULT_TUNING = {
     "CAND_MAX_S": 2.2,
     "TOP_SEMANTIC": 60,
     "KW_BONUS": 0.08,
+    # Stage 4 — audition
+    "AUDITION_TOP_N": 25,       # candidates per pool put on the board
+    "PREVIEW_PAD_S": 0.15,      # padding around preview clips
+    # Stage 5 — clean
+    "CLEAN_PAD_S": 0.10,        # padding kept on the final cut from source
+    "LOUDNORM_LUFS": -16.0,     # integrated-loudness target
+    "BANDPASS_HZ": None,        # (low, high) to band-limit, or None
+    "FADE_MS": 15,              # head/tail fade on finals
 }
 
 # Any group_idx falls inside this when a project declares no bands.

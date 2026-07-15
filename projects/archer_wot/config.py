@@ -71,6 +71,12 @@ TUNING = {
     "CAND_MAX_S": 2.2,
     "TOP_SEMANTIC": 60,
     "KW_BONUS": 0.08,
+    "AUDITION_TOP_N": 25,
+    "PREVIEW_PAD_S": 0.15,
+    "CLEAN_PAD_S": 0.10,
+    "LOUDNORM_LUFS": -16.0,
+    "BANDPASS_HZ": None,
+    "FADE_MS": 15,
 }
 
 # Real World of Tanks standard-battle voiceover events, pooled by emotional beat.
