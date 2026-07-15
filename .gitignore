@@ -7,6 +7,7 @@ env.sh
 .venv/
 __pycache__/
 *.pyc
+.pytest_cache/
 
 # Working data — huge, and derived from copyrighted source
 work/

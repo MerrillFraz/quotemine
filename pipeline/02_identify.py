@@ -113,6 +113,24 @@ def cut_clip(audio, params, s, e, out_path):
 # sample  (CPU) — one clip per utterance
 # ---------------------------------------------------------------------------
 
+def episodes_for_band(db, lo, hi, single_band):
+    """Episodes (with audio) belonging to a band, newest schema.
+
+    A single implicit band covers everything, INCLUDING items whose provenance
+    didn't parse (group_idx IS NULL) — e.g. a flat game. With real bands, the
+    numeric range applies and null-provenance items fall outside all of them
+    (they were warned about at scan time).
+    """
+    if single_band:
+        return db.execute(
+            "SELECT id, group_idx, item_idx, wav_path FROM episodes "
+            "WHERE wav_path IS NOT NULL ORDER BY group_idx, item_idx").fetchall()
+    return db.execute(
+        "SELECT id, group_idx, item_idx, wav_path FROM episodes "
+        "WHERE group_idx BETWEEN ? AND ? AND wav_path IS NOT NULL ORDER BY group_idx, item_idx",
+        (lo, hi)).fetchall()
+
+
 def cmd_sample(args, db):
     proj = args.proj
     t = proj.TUNING
@@ -123,17 +141,7 @@ def cmd_sample(args, db):
     uid = 0
     single_band = len(proj.BANDS) == 1
     for band_name, lo, hi in proj.BANDS:
-        if single_band:
-            # One implicit band covers everything, including items whose
-            # provenance didn't parse (group_idx IS NULL) — a flat game, say.
-            eps = db.execute(
-                "SELECT id, group_idx, item_idx, wav_path FROM episodes "
-                "WHERE wav_path IS NOT NULL ORDER BY group_idx, item_idx").fetchall()
-        else:
-            eps = db.execute(
-                "SELECT id, group_idx, item_idx, wav_path FROM episodes "
-                "WHERE group_idx BETWEEN ? AND ? AND wav_path IS NOT NULL ORDER BY group_idx, item_idx",
-                (lo, hi)).fetchall()
+        eps = episodes_for_band(db, lo, hi, single_band)
         if not eps:
             continue
         step = max(1, len(eps) // t["EPISODES_PER_BAND"])
