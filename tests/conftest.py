@@ -32,3 +32,13 @@ def index_mod():
 @pytest.fixture(scope="session")
 def identify_mod():
     return _load("pipeline/02_identify.py", "identify_stage")
+
+
+@pytest.fixture(scope="session")
+def audition_mod():
+    return _load("pipeline/04_audition.py", "audition_stage")
+
+
+@pytest.fixture(scope="session")
+def package_mod():
+    return _load("pipeline/06_package.py", "package_stage")
