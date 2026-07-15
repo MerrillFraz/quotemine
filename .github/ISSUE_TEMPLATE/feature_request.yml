@@ -1,0 +1,29 @@
+name: Feature request
+description: Propose an improvement to the pipeline
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Not sure it's concrete enough for an issue yet? Float it in
+        [Discussions → Ideas](../../discussions/categories/ideas) first.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do that the pipeline doesn't support (or makes painful)?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What you'd like to happen. If it's corpus-specific, note whether it belongs in the engine (pipeline/) or in a project config/hook (projects/<name>/).
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: false

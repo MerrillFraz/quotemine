@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Questions & help
+    url: https://github.com/MerrillFraz/quotemine/discussions/categories/q-a
+    about: Ask setup or usage questions in Discussions — issues are for bugs and concrete feature requests.
+  - name: Ideas & general discussion
+    url: https://github.com/MerrillFraz/quotemine/discussions
+    about: Show off a voice pack, float an idea, or talk shop.

@@ -1,0 +1,50 @@
+name: Bug report
+description: Something in the pipeline broke or behaved wrong
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Before filing, a quick pass through
+        [docs/gotchas.md](../../blob/main/docs/gotchas.md) is worth it — several
+        classic failures (CPU torch wheel, pyannote license, MAX_SPEAKERS) look
+        like bugs but are environment traps.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What went wrong, including the full error output or the wrong result.
+      placeholder: Paste the traceback / describe the bad output.
+    validations:
+      required: true
+  - type: input
+    id: command
+    attributes:
+      label: Stage and command
+      description: The exact command you ran.
+      placeholder: python pipeline/02_identify.py --project my_project assign --dry-run
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS (native Linux / WSL2), GPU + VRAM, Python version, and `python -c "import torch; print(torch.__version__, torch.cuda.is_available())"`.
+      placeholder: |
+        WSL2 Ubuntu 24.04, RTX 3080 12 GB, Python 3.12
+        torch 2.8.0+cu128 True
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Project config details, corpus size, whether it's reproducible, etc.
+    validations:
+      required: false
