@@ -1,0 +1,20 @@
+# Runtime dependencies for voiceover-pipeline.
+#
+# IMPORTANT — install torch FIRST, from the PyTorch index, BEFORE this file:
+#
+#     pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124
+#     pip install -r requirements.txt
+#
+# If you install whisperx (below) before torch, pip may resolve torch as a
+# transitive dependency and pull the CPU wheel — everything runs, at 1/50th
+# the speed. See docs/gotchas.md. torch/torchaudio are intentionally NOT pinned
+# here because the correct build depends on your CUDA version.
+#
+# Versions below are the tested set. whisperx pulls pyannote-audio and
+# transformers transitively; they are listed explicitly because the pipeline
+# imports them directly.
+
+whisperx==3.8.6
+transformers==4.57.6
+pyannote.audio==4.0.7
+numpy==2.5.1

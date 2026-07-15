@@ -1,0 +1,9 @@
+# Development dependencies (tests). Install after requirements.txt:
+#     pip install -r requirements-dev.txt
+#     pytest
+#
+# The suite covers only the pure-logic core (project loading, utterance
+# segmentation, filename parsing) — no GPU, no models, no audio. The ML stages
+# are validated by hand and by the pipeline/diag_*.py tools.
+
+pytest>=8,<9

@@ -52,7 +52,9 @@ tools for validating speaker separation; see `docs/pipeline.md`.
 python -m venv .venv && source .venv/bin/activate
 # torch FIRST, from the pytorch index (see docs/gotchas.md for why)
 pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124
-pip install whisperx transformers
+pip install -r requirements.txt          # whisperx, transformers, pyannote, numpy
+# optional, to run the test suite:
+pip install -r requirements-dev.txt
 export HF_TOKEN=hf_...        # your token; never commit this
 
 # Every stage takes --project (default: archer_wot, the bundled example).
