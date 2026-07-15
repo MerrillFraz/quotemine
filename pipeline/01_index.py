@@ -27,7 +27,6 @@ Design notes:
 import argparse
 import json
 import os
-import re
 import sqlite3
 import subprocess
 import sys
@@ -35,9 +34,13 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from project import load_project
+
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
+# Environment/hardware knobs live here; per-corpus knobs (language, speaker
+# bounds, segmentation) come from the project's TUNING (see pipeline/project.py).
 
 VIDEO_EXTS = {".mkv", ".mp4", ".avi", ".m4v", ".mov", ".webm"}
 
@@ -45,21 +48,6 @@ VIDEO_EXTS = {".mkv", ".mp4", ".avi", ".m4v", ".mov", ".webm"}
 WHISPER_MODEL = "large-v3"
 COMPUTE_TYPE = "float16"   # Ampere. Drop to "int8" only if desperate.
 BATCH_SIZE = 16            # Drop to 8 on OOM.
-LANGUAGE = "en"            # Pinned: skips detection, avoids misfires on cold opens.
-
-# Diarization bounds. pyannote UNDER-counts speakers when voices overlap,
-# which this show does constantly. Bounding it helps materially.
-MIN_SPEAKERS = 2
-MAX_SPEAKERS = 10
-
-# Utterance segmentation (index stage; cheap to re-tune, no GPU needed)
-MAX_WORD_GAP_S = 0.45      # Gap larger than this splits an utterance.
-MIN_UTTERANCE_S = 0.30     # Shorter than this is noise.
-MAX_UTTERANCE_S = 8.00     # Longer than this is a monologue, not a callout.
-
-# Filename parsing: S03E12, s3.e12, 3x12, etc.
-SXXEXX = re.compile(r"[Ss](\d{1,2})[\s._-]*[Ee](\d{1,3})")
-NXXN = re.compile(r"\b(\d{1,2})x(\d{2,3})\b")
 
 STAGES = ("demux", "asr", "diarize")
 
@@ -73,8 +61,8 @@ CREATE TABLE IF NOT EXISTS episodes (
     id          INTEGER PRIMARY KEY,
     path        TEXT UNIQUE NOT NULL,
     filename    TEXT NOT NULL,
-    season      INTEGER,
-    episode     INTEGER,
+    group_idx   INTEGER,                -- ordered provenance (e.g. season)
+    item_idx    INTEGER,                -- ordered provenance (e.g. episode)
     wav_path    TEXT,
     json_path   TEXT,
     duration_s  REAL
@@ -93,10 +81,10 @@ CREATE TABLE IF NOT EXISTS jobs (
 CREATE TABLE IF NOT EXISTS utterances (
     id          INTEGER PRIMARY KEY,
     episode_id  INTEGER NOT NULL,
-    season      INTEGER,
-    episode     INTEGER,
-    speaker     TEXT,                   -- SPEAKER_00 (episode-local, NOT global)
-    character   TEXT,                   -- filled by Stage 5 (global identity pass)
+    group_idx   INTEGER,                -- ordered provenance (e.g. season)
+    item_idx    INTEGER,                -- ordered provenance (e.g. episode)
+    speaker     TEXT,                   -- SPEAKER_00 (item-local, NOT global)
+    character   TEXT,                   -- filled by Stage 2 (global identity pass)
     start_s     REAL,
     end_s       REAL,
     duration_s  REAL,
@@ -154,7 +142,7 @@ def pending(db, stage):
         SELECT e.* FROM episodes e
         LEFT JOIN jobs j ON j.episode_id = e.id AND j.stage = ?
         WHERE j.status IS NULL OR j.status != 'done'
-        ORDER BY e.season, e.episode, e.filename
+        ORDER BY e.group_idx, e.item_idx, e.filename
         """,
         (stage,),
     ).fetchall()
@@ -164,17 +152,8 @@ def pending(db, stage):
 # scan
 # ---------------------------------------------------------------------------
 
-def parse_se(name: str):
-    m = SXXEXX.search(name)
-    if m:
-        return int(m.group(1)), int(m.group(2))
-    m = NXXN.search(name)
-    if m:
-        return int(m.group(1)), int(m.group(2))
-    return None, None
-
-
 def cmd_scan(args, db):
+    proj = args.proj
     src = Path(args.source).expanduser()
     if not src.is_dir():
         sys.exit(f"Source directory not found: {src}")
@@ -185,13 +164,13 @@ def cmd_scan(args, db):
 
     added = unparsed = 0
     for f in files:
-        season, ep = parse_se(f.name)
-        if season is None:
-            print(f"  [!] cannot parse SxxExx: {f.name}")
+        group_idx, item_idx = proj.parse(f.name)
+        if group_idx is None:
+            print(f"  [!] cannot parse provenance: {f.name}")
             unparsed += 1
         cur = db.execute(
-            "INSERT OR IGNORE INTO episodes(path, filename, season, episode) VALUES (?,?,?,?)",
-            (str(f), f.name, season, ep),
+            "INSERT OR IGNORE INTO episodes(path, filename, group_idx, item_idx) VALUES (?,?,?,?)",
+            (str(f), f.name, group_idx, item_idx),
         )
         if cur.rowcount:
             added += 1
@@ -200,7 +179,7 @@ def cmd_scan(args, db):
     total = db.execute("SELECT COUNT(*) c FROM episodes").fetchone()["c"]
     print(f"\nFound {len(files)} files. Added {added} new. Corpus now {total} episodes.")
     if unparsed:
-        print(f"\n*** {unparsed} file(s) have unparseable season/episode numbers. ***")
+        print(f"\n*** {unparsed} file(s) have unparseable provenance (parse() returned None). ***")
         print("*** Rename them NOW. Provenance in the audition board depends on it. ***")
 
 
@@ -255,6 +234,7 @@ def cmd_transcribe(args, db):
     import torch
     import whisperx
 
+    language = args.proj.TUNING["LANGUAGE"]
     device = "cuda" if torch.cuda.is_available() else "cpu"
     if device == "cpu":
         sys.exit("CUDA not available. Fix that before starting a 50-hour job on a CPU.")
@@ -270,10 +250,10 @@ def cmd_transcribe(args, db):
     print(f"[asr] {len(todo)} episode(s) to process. Loading models (once)...\n")
 
     model = whisperx.load_model(
-        WHISPER_MODEL, device, compute_type=COMPUTE_TYPE, language=LANGUAGE
+        WHISPER_MODEL, device, compute_type=COMPUTE_TYPE, language=language
     )
     align_model, align_meta = whisperx.load_align_model(
-        language_code=LANGUAGE, device=device
+        language_code=language, device=device
     )
 
     for i, row in enumerate(todo, 1):
@@ -281,7 +261,7 @@ def cmd_transcribe(args, db):
         print(f"[asr] ({i}/{len(todo)}) {row['filename']}")
         try:
             audio = whisperx.load_audio(row["wav_path"])
-            result = model.transcribe(audio, batch_size=BATCH_SIZE, language=LANGUAGE)
+            result = model.transcribe(audio, batch_size=BATCH_SIZE, language=language)
             result = whisperx.align(
                 result["segments"], align_model, align_meta, audio, device,
                 return_char_alignments=False,
@@ -348,8 +328,8 @@ def cmd_diarize(args, db):
             audio = whisperx.load_audio(row["wav_path"])
             diar, embeddings = pipe(
                 audio,
-                min_speakers=MIN_SPEAKERS,
-                max_speakers=MAX_SPEAKERS,
+                min_speakers=args.proj.TUNING["MIN_SPEAKERS"],
+                max_speakers=args.proj.TUNING["MAX_SPEAKERS"],
                 return_embeddings=True,
             )
 
@@ -392,7 +372,7 @@ def cmd_diarize(args, db):
 # Stage 4: index  (CPU only — re-run freely to re-tune segmentation)
 # ---------------------------------------------------------------------------
 
-def words_to_utterances(result):
+def words_to_utterances(result, tuning):
     """
     Flatten to a word stream, then split into utterances on:
       - speaker change
@@ -400,6 +380,9 @@ def words_to_utterances(result):
       - running length > MAX_UTTERANCE_S
     This yields natural callout-sized units instead of WhisperX's long segments.
     """
+    max_word_gap_s = tuning["MAX_WORD_GAP_S"]
+    min_utterance_s = tuning["MIN_UTTERANCE_S"]
+    max_utterance_s = tuning["MAX_UTTERANCE_S"]
     words = []
     for seg in result.get("segments", []):
         for w in seg.get("words", []):
@@ -420,7 +403,7 @@ def words_to_utterances(result):
             return
         start, end = cur[0]["s"], cur[-1]["e"]
         dur = end - start
-        if MIN_UTTERANCE_S <= dur <= MAX_UTTERANCE_S:
+        if min_utterance_s <= dur <= max_utterance_s:
             utts.append({
                 "speaker": cur[0]["spk"],
                 "start": start,
@@ -434,8 +417,8 @@ def words_to_utterances(result):
         if cur:
             same_spk = w["spk"] == cur[0]["spk"]
             gap = w["s"] - cur[-1]["e"]
-            too_long = (w["e"] - cur[0]["s"]) > MAX_UTTERANCE_S
-            if not same_spk or gap > MAX_WORD_GAP_S or too_long:
+            too_long = (w["e"] - cur[0]["s"]) > max_utterance_s
+            if not same_spk or gap > max_word_gap_s or too_long:
                 flush()
                 cur = []
         cur.append(w)
@@ -449,7 +432,7 @@ def cmd_index(args, db):
         SELECT e.* FROM episodes e
         JOIN jobs j ON j.episode_id = e.id AND j.stage='asr' AND j.status='done'
         WHERE e.json_path IS NOT NULL
-        ORDER BY e.season, e.episode
+        ORDER BY e.group_idx, e.item_idx
         """
     ).fetchall()
 
@@ -467,12 +450,12 @@ def cmd_index(args, db):
             print(f"  [skip] {row['filename']}: {e}")
             continue
 
-        utts = words_to_utterances(result)
+        utts = words_to_utterances(result, args.proj.TUNING)
         db.executemany(
             "INSERT INTO utterances"
-            "(episode_id, season, episode, speaker, character, start_s, end_s, duration_s, text, word_count) "
+            "(episode_id, group_idx, item_idx, speaker, character, start_s, end_s, duration_s, text, word_count) "
             "VALUES (?,?,?,?,NULL,?,?,?,?,?)",
-            [(row["id"], row["season"], row["episode"], u["speaker"],
+            [(row["id"], row["group_idx"], row["item_idx"], u["speaker"],
               u["start"], u["end"], u["duration"], u["text"], u["words"]) for u in utts],
         )
         total += len(utts)
@@ -483,15 +466,16 @@ def cmd_index(args, db):
 
     print(f"[index] {total} utterances indexed.\n")
 
-    # Voicepack-viable slice: the window a WoT crew callout actually lives in.
+    # Viable slice: the duration window this project's candidates live in.
+    lo, hi = args.proj.TUNING["CAND_MIN_S"], args.proj.TUNING["CAND_MAX_S"]
     viable = db.execute(
-        "SELECT COUNT(*) c FROM utterances WHERE duration_s BETWEEN 0.4 AND 2.0"
+        "SELECT COUNT(*) c FROM utterances WHERE duration_s BETWEEN ? AND ?", (lo, hi)
     ).fetchone()["c"]
     unattributed = db.execute(
         "SELECT COUNT(*) c FROM utterances WHERE speaker IS NULL"
     ).fetchone()["c"]
 
-    print(f"  in callout window (0.4-2.0s): {viable}")
+    print(f"  in candidate window ({lo}-{hi}s): {viable}")
     print(f"  unattributed (no speaker):    {unattributed}")
     if unattributed == total:
         print("\n  *** EVERY utterance is unattributed. Diarization did not take. ***")
@@ -536,12 +520,15 @@ def cmd_status(args, db):
 # ---------------------------------------------------------------------------
 
 def main():
-    p = argparse.ArgumentParser(description="Episode corpus indexer (Stages 1-4).")
-    p.add_argument("--workdir", default=str(Path(__file__).resolve().parent.parent / "work"),
-                   help="Working dir. Keep this on ext4, NOT under /mnt/.")
+    p = argparse.ArgumentParser(description="Corpus indexer (Stage 1).")
+    p.add_argument("--project", default="archer_wot",
+                   help="Project name under projects/ (see projects/_template/).")
+    p.add_argument("--workdir", default=None,
+                   help="Override working dir (default: work/<project>/). "
+                        "Keep this on ext4, NOT under /mnt/.")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    s = sub.add_parser("scan");       s.add_argument("source", help="Episode directory")
+    s = sub.add_parser("scan");       s.add_argument("source", help="Video source directory")
     sub.add_parser("demux")
     sub.add_parser("transcribe")
     sub.add_parser("diarize")
@@ -549,8 +536,9 @@ def main():
     sub.add_parser("status")
 
     args = p.parse_args()
-    Path(args.workdir).mkdir(parents=True, exist_ok=True)
-    db = connect(Path(args.workdir))
+    args.proj = load_project(args.project, args.workdir)
+    args.proj.workdir.mkdir(parents=True, exist_ok=True)
+    db = connect(args.proj.workdir)
 
     {
         "scan": cmd_scan, "demux": cmd_demux, "transcribe": cmd_transcribe,

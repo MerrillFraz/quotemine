@@ -2,9 +2,9 @@
 """
 03_match.py — Match attributed utterances to (pooled) game events.
 
-Pools come from wot_events.py: real WoT standard-battle voiceover events,
-grouped by emotional beat. Each pool -> one Wwise Random Container at Stage 9,
-wired to fire on all of that pool's game events.
+Pools come from the active project's config (projects/<name>/config.py), grouped
+by emotional beat. Each pool -> one downstream container (e.g. a Wwise Random
+Container), wired to fire on all of that pool's game events.
 
 Two passes per pool:
   keyword  — FTS5 over the transcript. Fast, catches obvious hits.
@@ -27,15 +27,11 @@ from pathlib import Path
 
 import numpy as np
 
-from wot_events import POOLS
+from project import load_project
 
-WORKDIR_DEFAULT = str(Path(__file__).resolve().parent.parent / "work")
+# Model default (environment). POOLS and the candidate/scoring knobs come from
+# the project (pipeline/project.py).
 TEXT_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-
-CAND_MIN_S = 0.4
-CAND_MAX_S = 2.2
-TOP_SEMANTIC = 60
-KW_BONUS = 0.15
 
 
 def connect(workdir):
@@ -59,10 +55,10 @@ def connect(workdir):
     return db
 
 
-def load_pools(db):
+def load_pools(db, pools):
     db.execute("DELETE FROM pools")
     db.execute("DELETE FROM pool_events")
-    for pid, disp, char, kw, desc, events in POOLS:
+    for pid, disp, char, kw, desc, events in pools:
         db.execute("INSERT INTO pools VALUES (?,?,?,?,?)", (pid, disp, char, kw, desc))
         db.executemany("INSERT INTO pool_events VALUES (?,?)",
                        [(pid, ev) for ev in events])
@@ -74,15 +70,17 @@ def load_pools(db):
 # ---------------------------------------------------------------------------
 
 def cmd_events(args, db):
-    load_pools(db)
-    print(f"{len(POOLS)} pools loaded, "
-          f"{sum(len(p[5]) for p in POOLS)} game events mapped.\n")
+    pools = args.proj.POOLS
+    load_pools(db, pools)
+    print(f"{len(pools)} pools loaded, "
+          f"{sum(len(p[5]) for p in pools)} game events mapped.\n")
     print(f"{'pool_id':<16}{'char':<9}{'evts':>5}  display")
     for p in db.execute("SELECT * FROM pools"):
         n = db.execute("SELECT COUNT(*) c FROM pool_events WHERE pool_id=?",
                        (p["pool_id"],)).fetchone()["c"]
         print(f"{p['pool_id']:<16}{(p['suggested_char'] or '-'):<9}{n:>5}  {p['display']}")
-    print("\nEdit wot_events.py to tune pools/descriptions. Then re-run events, then match.")
+    print(f"\nEdit projects/{args.project}/config.py to tune pools/descriptions. "
+          "Then re-run events, then match.")
 
 
 # ---------------------------------------------------------------------------
@@ -117,12 +115,12 @@ def make_text_embedder():
     return embed
 
 
-def ensure_text_embeddings(db, embed):
+def ensure_text_embeddings(db, embed, cand_min_s, cand_max_s):
     cand = db.execute(
         "SELECT id, text FROM utterances "
         "WHERE character IS NOT NULL AND duration_s BETWEEN ? AND ? "
         "AND text IS NOT NULL AND length(text) > 0",
-        (CAND_MIN_S, CAND_MAX_S)).fetchall()
+        (cand_min_s, cand_max_s)).fetchall()
     have = {r["utterance_id"] for r in db.execute("SELECT utterance_id FROM text_emb")}
     todo = [(r["id"], r["text"]) for r in cand if r["id"] not in have]
     print(f"[text] {len(cand)} candidates, {len(todo)} need embedding")
@@ -147,11 +145,14 @@ def load_text_matrix(db, ids):
 # ---------------------------------------------------------------------------
 
 def cmd_match(args, db):
+    t = args.proj.TUNING
+    cand_min_s, cand_max_s = t["CAND_MIN_S"], t["CAND_MAX_S"]
+    top_semantic, kw_bonus = t["TOP_SEMANTIC"], t["KW_BONUS"]
     if not db.execute("SELECT 1 FROM pools LIMIT 1").fetchone():
-        load_pools(db)
+        load_pools(db, args.proj.POOLS)
 
     embed = make_text_embedder()
-    cand_ids = ensure_text_embeddings(db, embed)
+    cand_ids = ensure_text_embeddings(db, embed, cand_min_s, cand_max_s)
     ids, M = load_text_matrix(db, cand_ids)
     if not ids:
         sys.exit("No candidate embeddings. Did Stage 2 attribute characters?")
@@ -163,7 +164,7 @@ def cmd_match(args, db):
     db.execute("DELETE FROM pool_candidates")
     for p, pv in zip(pools, pool_vecs):
         sims = M @ pv
-        order = np.argsort(-sims)[:TOP_SEMANTIC]
+        order = np.argsort(-sims)[:top_semantic]
         cand = {ids[k]: float(sims[k]) for k in order}
 
         kw_ids = set()
@@ -172,7 +173,7 @@ def cmd_match(args, db):
             "SELECT u.id FROM utterances u "
             "WHERE u.character IS NOT NULL AND u.duration_s BETWEEN ? AND ? "
             "AND u.id IN (SELECT rowid FROM utterances_fts WHERE utterances_fts MATCH ?)",
-            (CAND_MIN_S, CAND_MAX_S, terms)):
+            (cand_min_s, cand_max_s, terms)):
             kw_ids.add(r["id"])
 
         rows = []
@@ -182,7 +183,7 @@ def cmd_match(args, db):
                 sem = float(M[id_pos[uid]] @ pv)
             sem = sem if sem is not None else 0.0
             kw = 1 if uid in kw_ids else 0
-            rows.append((p["pool_id"], uid, kw, sem, sem + (KW_BONUS if kw else 0.0)))
+            rows.append((p["pool_id"], uid, kw, sem, sem + (kw_bonus if kw else 0.0)))
         db.executemany("INSERT OR REPLACE INTO pool_candidates VALUES (?,?,?,?,?)", rows)
     db.commit()
     print("\n[match] done.")
@@ -222,8 +223,10 @@ def cmd_show(args, db):
 
 
 def main():
-    p = argparse.ArgumentParser()
-    p.add_argument("--workdir", default=WORKDIR_DEFAULT)
+    p = argparse.ArgumentParser(description="Match lines to event pools (Stage 3).")
+    p.add_argument("--project", default="archer_wot",
+                   help="Project name under projects/ (see projects/_template/).")
+    p.add_argument("--workdir", default=None, help="Override (default: work/<project>/).")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("events")
     sub.add_parser("match")
@@ -231,7 +234,9 @@ def main():
     s = sub.add_parser("show"); s.add_argument("pool_id"); s.add_argument("-n", type=int, default=25)
     args = p.parse_args()
 
-    db = connect(args.workdir)
+    args.proj = load_project(args.project, args.workdir)
+    args.proj.workdir.mkdir(parents=True, exist_ok=True)
+    db = connect(args.proj.workdir)
     {"events": cmd_events, "match": cmd_match, "list": cmd_list, "show": cmd_show}[args.cmd](args, db)
     db.close()
 

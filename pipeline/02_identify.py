@@ -34,28 +34,11 @@ from pathlib import Path
 
 import numpy as np
 
-CHARACTERS = ["Archer", "Lana", "Malory", "Cyril", "Pam", "Cheryl", "Krieger", "Ray"]
+from project import load_project
 
-BANDS = [("S01-S03", 1, 3), ("S04-S07", 4, 7), ("S08-S11", 8, 11), ("S12-S14", 12, 14)]
-
+# Model default (environment, not per-project). Per-corpus knobs — roster,
+# bands, sampling/assignment windows — come from the project (pipeline/project.py).
 EMBED_MODEL = "pyannote/wespeaker-voxceleb-resnet34-LM"   # verified to load
-
-# --- sampling for the tagger ---
-EPISODES_PER_BAND = 8
-CLUSTERS_PER_EPISODE = 8
-UTTS_PER_CLUSTER = 6          # individual lines offered per cluster
-TALK_FLOOR_S = 60.0          # skip bit-player clusters (overflow lives in the deep ranks)
-UTT_MIN_S = 0.8
-UTT_MAX_S = 3.0
-UTT_MIN_WORDS = 3
-ISOLATION_PAD_S = 0.5
-MIN_SNR_DB = 8.0             # per-line cleanliness floor
-
-# --- assignment ---
-CLUSTER_EMBED_UTTS = 12      # isolated lines averaged to form each cluster's target vector
-DEFAULT_THRESHOLD = 0.50
-
-WORKDIR_DEFAULT = str(Path(__file__).resolve().parent.parent / "work")
 
 
 def connect(workdir):
@@ -76,13 +59,6 @@ def connect(workdir):
             PRIMARY KEY (episode_id, speaker));
     """)
     return db
-
-
-def band_of(season):
-    for name, lo, hi in BANDS:
-        if lo <= season <= hi:
-            return name
-    return None
 
 
 # ---------------------------------------------------------------------------
@@ -115,7 +91,7 @@ def snr_db(audio, fr, s, e, pad=0.30):
     return 20.0 * math.log10(r / (min(bgs) + 1e-6)) if r > 0 else -99.0
 
 
-def isolated(db, eid, spk, s, e, pad=ISOLATION_PAD_S):
+def isolated(db, eid, spk, s, e, pad):
     return db.execute(
         "SELECT COUNT(*) c FROM utterances WHERE episode_id=? AND IFNULL(speaker,'')!=? "
         "AND start_s<? AND end_s>?", (eid, spk, e + pad, s - pad)).fetchone()["c"] == 0
@@ -138,20 +114,22 @@ def cut_clip(audio, params, s, e, out_path):
 # ---------------------------------------------------------------------------
 
 def cmd_sample(args, db):
-    prev = Path(args.workdir) / "utt_previews"
+    proj = args.proj
+    t = proj.TUNING
+    prev = Path(proj.workdir) / "utt_previews"
     prev.mkdir(parents=True, exist_ok=True)
     db.execute("DELETE FROM utt_pool")
 
     uid = 0
-    for band_name, lo, hi in BANDS:
+    for band_name, lo, hi in proj.BANDS:
         eps = db.execute(
-            "SELECT id, season, episode, wav_path FROM episodes "
-            "WHERE season BETWEEN ? AND ? AND wav_path IS NOT NULL ORDER BY season, episode",
+            "SELECT id, group_idx, item_idx, wav_path FROM episodes "
+            "WHERE group_idx BETWEEN ? AND ? AND wav_path IS NOT NULL ORDER BY group_idx, item_idx",
             (lo, hi)).fetchall()
         if not eps:
             continue
-        step = max(1, len(eps) // EPISODES_PER_BAND)
-        chosen = eps[::step][:EPISODES_PER_BAND]
+        step = max(1, len(eps) // t["EPISODES_PER_BAND"])
+        chosen = eps[::step][:t["EPISODES_PER_BAND"]]
         print(f"[sample] {band_name}: {len(chosen)} episodes")
 
         for ep in chosen:
@@ -161,25 +139,25 @@ def cmd_sample(args, db):
                 "SELECT speaker, SUM(duration_s) talk FROM utterances "
                 "WHERE episode_id=? AND speaker IS NOT NULL "
                 "GROUP BY speaker HAVING talk >= ? ORDER BY talk DESC LIMIT ?",
-                (ep["id"], TALK_FLOOR_S, CLUSTERS_PER_EPISODE)).fetchall()
+                (ep["id"], t["TALK_FLOOR_S"], t["CLUSTERS_PER_EPISODE"])).fetchall()
 
             for c in clusters:
                 cands = db.execute(
                     "SELECT start_s, end_s, text FROM utterances "
                     "WHERE episode_id=? AND speaker=? AND duration_s BETWEEN ? AND ? "
                     "AND word_count >= ?",
-                    (ep["id"], c["speaker"], UTT_MIN_S, UTT_MAX_S, UTT_MIN_WORDS)).fetchall()
+                    (ep["id"], c["speaker"], t["UTT_MIN_S"], t["UTT_MAX_S"], t["UTT_MIN_WORDS"])).fetchall()
 
                 scored = []
                 for u in cands:
-                    if not isolated(db, ep["id"], c["speaker"], u["start_s"], u["end_s"]):
+                    if not isolated(db, ep["id"], c["speaker"], u["start_s"], u["end_s"], t["ISOLATION_PAD_S"]):
                         continue
                     q = snr_db(audio, fr, u["start_s"], u["end_s"])
-                    if q >= MIN_SNR_DB:
+                    if q >= t["MIN_SNR_DB"]:
                         scored.append((q, u))
                 scored.sort(key=lambda x: -x[0])
 
-                for q, u in scored[:UTTS_PER_CLUSTER]:
+                for q, u in scored[:t["UTTS_PER_CLUSTER"]]:
                     out = prev / f"u{uid:05d}.wav"
                     if not cut_clip(audio, params, u["start_s"], u["end_s"], out):
                         continue
@@ -191,20 +169,25 @@ def cmd_sample(args, db):
     db.commit()
 
     rows = db.execute(
-        "SELECT up.*, e.season, e.episode FROM utt_pool up JOIN episodes e ON e.id=up.episode_id "
-        "ORDER BY e.season, e.episode, up.speaker, up.snr DESC").fetchall()
-    (Path(args.workdir) / "tagger_utt.html").write_text(build_tagger([dict(r) for r in rows]))
+        "SELECT up.*, e.group_idx, e.item_idx FROM utt_pool up JOIN episodes e ON e.id=up.episode_id "
+        "ORDER BY e.group_idx, e.item_idx, up.speaker, up.snr DESC").fetchall()
+    tagged_rows = []
+    for r in rows:
+        d = dict(r)
+        d["label"] = proj.label(r["group_idx"], r["item_idx"])
+        tagged_rows.append(d)
+    (Path(proj.workdir) / "tagger_utt.html").write_text(build_tagger(tagged_rows, proj))
 
     print(f"\n[sample] {uid} individual utterances across {len(set((r['episode_id'],r['speaker']) for r in rows))} clusters")
     print("  cd work && python -m http.server 8000")
     print("  open http://localhost:8000/tagger_utt.html")
 
 
-def build_tagger(rows):
+def build_tagger(rows, proj):
     return (TAGGER_HTML
             .replace("__DATA__", json.dumps(rows))
-            .replace("__CHARS__", json.dumps(CHARACTERS))
-            .replace("__BANDS__", json.dumps([b[0] for b in BANDS])))
+            .replace("__CHARS__", json.dumps(proj.CHARACTERS))
+            .replace("__BANDS__", json.dumps([b[0] for b in proj.BANDS])))
 
 
 TAGGER_HTML = r"""<!doctype html>
@@ -237,7 +220,7 @@ TAGGER_HTML = r"""<!doctype html>
 <h1>UTTERANCE TAGGER</h1>
 <div class="sub">One line per row, grouped by cluster (blue headers). Play the first line of a cluster to ID the voice,
 then approve the clean lines and <b>skip only the misfiled ones</b>. A bad line costs one skip, not the cluster.
-Aim for 12+ approved lines per character across 3+ bands.</div>
+Aim for 12+ approved lines per character, spread across your bands (up to 3) if the project defines them.</div>
 <div id="ctl">
   <label><input type="checkbox" id="fUn"> untagged only</label>
   <label>band <select id="fBand"><option value="">all</option></select></label>
@@ -263,8 +246,7 @@ function render(){
     if(ck!==lastCluster){
       lastCluster=ck;
       const hr=document.createElement("tr"); hr.className="clusterhead";
-      const ep="S"+String(r.season).padStart(2,"0")+"E"+String(r.episode).padStart(2,"0");
-      hr.innerHTML=`<td colspan="5">${ep} &middot; ${r.speaker} &middot; ${r.band}</td>`;
+      hr.innerHTML=`<td colspan="5">${r.label} &middot; ${r.speaker} &middot; ${r.band}</td>`;
       tb.appendChild(hr);
     }
     shown++;
@@ -285,12 +267,13 @@ function render(){
 }
 function hud(){
   const h=document.getElementById("hud"); h.innerHTML="";
+  const bandTarget=Math.min(3, BANDS.length);
   for(const c of CHARS){
     const mine=ROWS.filter(r=>tags[r.id]===c);
     const hit=new Set(mine.map(r=>r.band));
-    const ok=mine.length>=12 && hit.size>=3;
+    const ok=mine.length>=12 && hit.size>=bandTarget;
     const d=document.createElement("div"); d.className="cc"+(ok?" done":"");
-    d.innerHTML=`<b>${c}</b> ${mine.length} `+BANDS.map(b=>`<span class="b ${hit.has(b)?"hit":""}">${b.slice(1,3)}</span>`).join("");
+    d.innerHTML=`<b>${c}</b> ${mine.length} `+BANDS.map(b=>`<span class="b ${hit.has(b)?"hit":""}">${b}</span>`).join("");
     h.appendChild(d);
   }
   const b=document.createElement("button"); b.id="exp"; b.textContent="Export refs.json";
@@ -378,12 +361,12 @@ def cmd_embed(args, db):
             continue
         sig, sr = load_span(wav, r["start_s"], u["end_s"])
         v = embed(sig, sr)
-        se = db.execute("SELECT season FROM episodes WHERE id=?", (r["episode_id"],)).fetchone()["season"]
-        by_char.setdefault(r["character"], []).append((v, band_of(se)))
+        g = db.execute("SELECT group_idx FROM episodes WHERE id=?", (r["episode_id"],)).fetchone()["group_idx"]
+        by_char.setdefault(r["character"], []).append((v, args.proj.band_of(g)))
 
     db.execute("DELETE FROM centroids")
     print(f"\n{'character':<10}{'n':>4}  {'tight':<7} bands")
-    for ch in CHARACTERS:
+    for ch in args.proj.CHARACTERS:
         items = by_char.get(ch, [])
         if not items:
             print(f"{ch:<10}{0:>4}  *** NO REFERENCES ***")
@@ -394,10 +377,11 @@ def cmd_embed(args, db):
         bands = sorted({b for _, b in items if b})
         db.execute("INSERT INTO centroids VALUES (?,?,?,?,?)",
                    (ch, json.dumps(c.tolist()), len(items), ",".join(bands), tight))
-        warn = "  <-- thin" if (len(items) < 8 or len(bands) < 3) else ("  <-- LOOSE (mis-tag?)" if tight < 0.45 else "")
+        band_target = min(3, len(args.proj.BANDS))
+        warn = "  <-- thin" if (len(items) < 8 or len(bands) < band_target) else ("  <-- LOOSE (mis-tag?)" if tight < 0.45 else "")
         print(f"{ch:<10}{len(items):>4}  {tight:<7.3f} {','.join(bands)}{warn}")
     db.commit()
-    print("\n[embed] done. Next: python stage5b.py assign --dry-run")
+    print("\n[embed] done. Next: python pipeline/02_identify.py assign --dry-run")
 
 
 # ---------------------------------------------------------------------------
@@ -405,6 +389,8 @@ def cmd_embed(args, db):
 # ---------------------------------------------------------------------------
 
 def cmd_assign(args, db):
+    t = args.proj.TUNING
+    cluster_embed_utts = t["CLUSTER_EMBED_UTTS"]
     crows = db.execute("SELECT character, vector FROM centroids").fetchall()
     if not crows:
         sys.exit("No centroids. Run `embed` first.")
@@ -417,7 +403,7 @@ def cmd_assign(args, db):
     all_clusters = db.execute(
         "SELECT DISTINCT episode_id, speaker FROM utterances WHERE speaker IS NOT NULL").fetchall()
     print(f"[assign] embedding {len(all_clusters)} clusters "
-          f"(up to {CLUSTER_EMBED_UTTS} isolated lines each)...")
+          f"(up to {cluster_embed_utts} isolated lines each)...")
 
     keys, vecs = [], []
     for i, cl in enumerate(all_clusters, 1):
@@ -428,12 +414,12 @@ def cmd_assign(args, db):
         us = db.execute(
             "SELECT start_s, end_s FROM utterances WHERE episode_id=? AND speaker=? "
             "AND duration_s BETWEEN ? AND ? AND word_count >= ? ORDER BY duration_s DESC LIMIT ?",
-            (eid, spk, UTT_MIN_S, UTT_MAX_S, UTT_MIN_WORDS, CLUSTER_EMBED_UTTS * 2)).fetchall()
+            (eid, spk, t["UTT_MIN_S"], t["UTT_MAX_S"], t["UTT_MIN_WORDS"], cluster_embed_utts * 2)).fetchall()
         evs = []
         for u in us:
-            if len(evs) >= CLUSTER_EMBED_UTTS:
+            if len(evs) >= cluster_embed_utts:
                 break
-            if not isolated(db, eid, spk, u["start_s"], u["end_s"]):
+            if not isolated(db, eid, spk, u["start_s"], u["end_s"], t["ISOLATION_PAD_S"]):
                 continue
             sig, sr = load_span(wav, u["start_s"], u["end_s"])
             evs.append(embed(sig, sr))
@@ -477,25 +463,33 @@ def cmd_assign(args, db):
         SELECT c.character FROM clusters c
         WHERE c.episode_id=utterances.episode_id AND c.speaker=utterances.speaker)""")
     db.commit()
+    lo, hi = t["CAND_MIN_S"], t["CAND_MAX_S"]
     print("\nattributed:")
     for r in db.execute("SELECT COALESCE(character,'(none)') ch, COUNT(*) n, "
-                        "SUM(duration_s BETWEEN 0.4 AND 2.0) callout FROM utterances "
-                        "GROUP BY ch ORDER BY n DESC"):
-        print(f"  {r['ch']:<10}{r['n']:>7}  ({r['callout']} callout)")
+                        "SUM(duration_s BETWEEN ? AND ?) callout FROM utterances "
+                        "GROUP BY ch ORDER BY n DESC", (lo, hi)):
+        print(f"  {r['ch']:<10}{r['n']:>7}  ({r['callout']} candidate)")
 
 
 def main():
-    p = argparse.ArgumentParser()
-    p.add_argument("--workdir", default=WORKDIR_DEFAULT)
+    p = argparse.ArgumentParser(description="Identify speakers -> characters (Stage 2).")
+    p.add_argument("--project", default="archer_wot",
+                   help="Project name under projects/ (see projects/_template/).")
+    p.add_argument("--workdir", default=None, help="Override (default: work/<project>/).")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("sample")
     e = sub.add_parser("embed"); e.add_argument("reffile")
     a = sub.add_parser("assign")
-    a.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD)
+    a.add_argument("--threshold", type=float, default=None,
+                   help="Similarity cutoff (default: project DEFAULT_THRESHOLD).")
     a.add_argument("--dry-run", action="store_true")
     args = p.parse_args()
 
-    db = connect(args.workdir)
+    args.proj = load_project(args.project, args.workdir)
+    if getattr(args, "threshold", None) is None:
+        args.threshold = args.proj.TUNING["DEFAULT_THRESHOLD"]
+    args.proj.workdir.mkdir(parents=True, exist_ok=True)
+    db = connect(args.proj.workdir)
     {"sample": cmd_sample, "embed": cmd_embed, "assign": cmd_assign}[args.cmd](args, db)
     db.close()
 
