@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-stage5b.py — Per-UTTERANCE reference tagging + neural centroids + assignment.
+02_identify.py — Stage 2: per-utterance reference tagging + neural centroids + assignment.
 
 Why this replaces the clip approach: bundling utterances into clips made
 contamination contagious — one misfiled line forced you to skip the whole

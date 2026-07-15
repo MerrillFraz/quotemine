@@ -69,21 +69,25 @@ good balance; averaging is what rescues short-clip embedding noise.
 
 ## Stage 3 — Match
 
-### The `EVENTS` list
-The main thing you'll edit. Each event = keywords + description + suggested
-character. **Reconcile event names/IDs against your actual target** (for a game
-soundbank, the real event strings from the sound project). The names here are
-search labels; they don't have to match your target until you package.
+### The `POOLS` list
+The main thing you'll edit — lives in `wot_events.py`, not `03_match.py`
+itself. Each pool = keywords + description + suggested character + a list of
+real target game event IDs it's wired to. A pool maps to *multiple* game
+events on purpose: downstream, each pool becomes one Random Container wired
+to fire on every event mapped to it. **Reconcile the game event IDs against
+your actual target** (for a game soundbank, the real event strings from the
+sound project). The pool names/IDs themselves are just search labels; they
+don't have to match your target.
 
 - **Keywords** drive the FTS pass — literal terms that might appear in a matching
   line. Quote-safe (apostrophes handled).
 - **Description** drives the semantic pass — a natural-language sentence of what
-  the event *means*. This is where quality lives: "urgent, the enemy is capturing
+  the pool *means*. This is where quality lives: "urgent, the enemy is capturing
   our base" ranks far better than "base capture". Sharpen these using your
   target's own event descriptions if it has them.
 
 ### `TOP_SEMANTIC` (default 60)
-How many semantic hits to keep per event. Raise for more candidates to audition,
+How many semantic hits to keep per pool. Raise for more candidates to audition,
 lower for a tighter list. Re-run cost: instant (embeddings cached).
 
 ### `KW_BONUS` (default 0.15)

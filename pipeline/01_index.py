@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """
-archer_index.py — Stages 1-4 of the voicepack pipeline.
+01_index.py — Stage 1 of the voicepack pipeline.
 
 Builds a searchable, speaker-attributed, word-timed index of an episode corpus.
 
 Subcommands (run in order; each is idempotent and resumable):
 
     scan        Discover episodes, parse SxxExx, populate the job queue.
-    demux       Stage 1: extract 16kHz mono WAV via ffmpeg.           [CPU]
-    transcribe  Stage 2: WhisperX ASR + wav2vec2 forced alignment.    [GPU]
-    diarize     Stage 3: pyannote diarization + speaker assignment.   [GPU]
-    index       Stage 4: build utterances table + FTS5 index.         [CPU]
-    status      Show progress across all stages.
+    demux       Extract 16kHz mono WAV via ffmpeg.                    [CPU]
+    transcribe  WhisperX ASR + wav2vec2 forced alignment.             [GPU]
+    diarize     pyannote diarization + speaker assignment.            [GPU]
+    index       Build utterances table + FTS5 index.                  [CPU]
+    status      Show progress across all sub-steps.
 
 Design notes:
   - transcribe and diarize are SEPARATE PROCESSES on purpose. Each loads its

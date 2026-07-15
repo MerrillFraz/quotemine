@@ -92,24 +92,29 @@ write the `character` column onto every utterance.
 
 ## Stage 3 — Match (`03_match.py`)
 
-Ranks attributed lines against a list of events.
+Ranks attributed lines against a list of pools, each wired to one or more
+real target game events (see `wot_events.py`).
 
 ### `events`
-Loads/prints the event definitions (edit the `EVENTS` list in the script). Each
-event has: keywords (for FTS), a natural-language description (for semantic
-search), and an optional suggested character (a hint, not a filter).
+Loads/prints the pool definitions (edit the `POOLS` list in `wot_events.py`,
+not `03_match.py` itself). Each pool has: keywords (for FTS), a
+natural-language description (for semantic search), an optional suggested
+character (a hint, not a filter), and a list of real target game event IDs
+that pool is wired to. A pool maps to *multiple* game events on purpose —
+each pool becomes one Random Container downstream, wired to fire on every
+event mapped to it.
 
 ### `match`  *(GPU once, then cached)*
-Two passes per event:
+Two passes per pool:
 - **Keyword** — FTS5 over the transcript. Catches obvious hits.
-- **Semantic** — embeds the event *description* (MiniLM) and ranks every line by
+- **Semantic** — embeds the pool *description* (MiniLM) and ranks every line by
   meaning. Surfaces the perfect line that shares no keywords — the real value.
 
 Text embeddings are cached in the DB, so re-tuning descriptions and re-running is
 instant.
 
-### `list` / `show <event_id>`
-Inspect candidate counts and top-ranked lines per event. A `*` marks keyword
+### `list` / `show <pool_id>`
+Inspect candidate counts and top-ranked lines per pool. A `*` marks keyword
 hits; high-`sem` rows *without* a star are pure semantic finds.
 
 **Expect two classes of event:** "personality" events (taunt, confusion, victory)
@@ -136,5 +141,7 @@ has no literal equivalent — you match on *energy*, looser.
 - `utterances_fts` — FTS5 mirror of `utterances.text`.
 - `centroids` — per-character voiceprint vectors.
 - `clusters` — per-cluster assignment + similarity.
-- `events`, `event_candidates` — event definitions and ranked matches.
+- `pools`, `pool_events`, `pool_candidates` — pool definitions, their mapped
+  game events, and ranked line matches.
+- `text_emb` — cached MiniLM text embeddings for utterances (Stage 3).
 - `jobs` — per-episode, per-stage progress (the resumability backbone).
