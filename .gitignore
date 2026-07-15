@@ -1,0 +1,24 @@
+# Secrets — NEVER commit
+env.sh
+.env
+*.token
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Working data — huge, and derived from copyrighted source
+work/
+*.db
+*.db-wal
+*.db-shm
+*.wav
+*.json
+
+# HF model cache
+.hf_cache/
+
+# OS
+.DS_Store
+Thumbs.db
