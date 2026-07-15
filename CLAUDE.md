@@ -1,7 +1,8 @@
 # CLAUDE.md — voiceover-pipeline
 
 Generic pipeline: video archive → speaker-attributed searchable line
-database → event-matched candidate lists. Three GPU stages + human tagging.
+database → event-matched candidate lists → auditioned, cleaned, packaged
+deliverable. Six stages (three GPU) + human tagging + human audition.
 
 ## Read first
 - `docs/gotchas.md` — hard-won failure modes. Read before changing anything
@@ -16,15 +17,26 @@ Every stage takes `--project <name>` (default `archer_wot`), resolved against
 - `pipeline/01_index.py`  — demux, transcribe, diarize, index  [GPU]
 - `pipeline/02_identify.py` — tag → centroids → assign          [GPU + human]
 - `pipeline/03_match.py`  — keyword + semantic event matching   [GPU]
+- `pipeline/04_audition.py` — preview candidates → keep/reject → picks [human]
+- `pipeline/05_clean.py`  — re-cut finals from source, loudnorm/fades [CPU]
+- `pipeline/06_package.py` — assemble clips + manifest (project hook)  [CPU]
+
+Stages 4–6 share `pipeline/downstream.py` (clip cutting, cleaning, board,
+manifest helpers). They need ffmpeg, not the GPU.
 
 ## Project vs. engine (portability)
-- The three stages are generic. Everything specific to a corpus — filename
-  parsing, character roster, era-bands, event pools, and per-corpus tuning —
-  lives in `projects/<name>/config.py`. `projects/_template/` is the starting
-  point; `projects/archer_wot/` is the worked example (Archer → World of Tanks).
+- The stages are generic. Everything specific to a corpus — filename parsing,
+  character roster, era-bands, event pools, and per-corpus tuning — lives in
+  `projects/<name>/config.py`. `projects/_template/` is the starting point;
+  `projects/archer_wot/` is the worked example (Archer → World of Tanks).
 - Provenance is neutral: `group_idx`/`item_idx` are orderable ints (a TV show
   maps them to season/episode; a film/game may leave them null). Nothing in
   `pipeline/` assumes television.
+- **Projects may carry code, not just config.** An optional
+  `projects/<name>/package.py` with a `package(ctx)` function overrides Stage 6's
+  generic packaging for a target-specific layout (see `archer_wot/package.py`,
+  which emits Wwise `RC_` containers). It composes `pipeline/downstream.py`
+  helpers rather than reinventing them.
 
 ## Conventions
 - Each project reads/writes one SQLite DB: `work/<project>/corpus.db`.
@@ -42,5 +54,7 @@ Every stage takes `--project <name>` (default `archer_wot`), resolved against
 - Reintroduce clip-based tagging (see gotchas: per-utterance is deliberate).
 - Install whisperx before torch (pulls CPU wheel).
 - Build an auto-purity filter for short utterances (proven not to work).
-- Build out audition/clean/package stages as if they're missing — they're
-  intentionally left to the user downstream of `03_match.py`. See docs/pipeline.md.
+- Silence-trim final clips (Stage 5): the intentional CLEAN_PAD_S head/tail is
+  the point, and aggressive trimming guts quieter clips. loudnorm + fades only.
+- Cut finals from the 16 kHz working WAV. Stage 5 re-cuts from the original
+  source (`episodes.path`) for full quality; the 16 kHz WAV is ML-only.

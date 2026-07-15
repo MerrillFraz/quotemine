@@ -128,3 +128,40 @@ filler word can't outrank a genuinely better semantic match.
 Duration filter for what's eligible as a candidate. Match this to your output's
 needs — game callouts want short (0.4–2.0 s); a general soundboard might want
 wider.
+
+---
+
+## Stages 4–6 — Downstream
+
+All downstream knobs are TUNING keys too. Re-run cost is cheap (ffmpeg, no GPU).
+
+### `AUDITION_TOP_N` (default 25)
+Candidates per pool put on the audition board (`04_audition sample`). Raise to
+review deeper into the ranking, lower for a tighter board.
+
+### `PREVIEW_PAD_S` (default 0.15)
+Padding around audition preview clips (cut from the 16 kHz WAV). Purely for
+comfortable listening; doesn't affect finals.
+
+### `CLEAN_PAD_S` (default 0.10)
+Padding kept on the **final** cut from the original source. This head/tail is
+intentional — it keeps clips from sounding hard-clipped. Stage 5 does **not**
+silence-trim, so this padding survives.
+
+### `LOUDNORM_LUFS` (default -16.0)
+Integrated-loudness target for finals (ffmpeg `loudnorm`). Note: EBU R128
+integrated measurement wants ≥3 s, so on sub-second callouts loudnorm runs in
+its single-pass dynamic mode — consistent enough for a pack, but don't expect
+a lab-exact match across very short clips.
+
+### `BANDPASS_HZ` (default None)
+`(low, high)` to band-limit the final (e.g. `(300, 3400)` for a radio/telephone
+character), or `None` to leave full-band.
+
+### `FADE_MS` (default 15)
+Head/tail fade on finals, to avoid clicks. Applied both ends.
+
+### Packaging
+Layout is code, not a knob: the generic default writes `package/<pool>/` +
+`manifest.json`. For a target-specific layout, add `projects/<name>/package.py`
+with a `package(ctx)` function (see `projects/archer_wot/package.py`).

@@ -131,14 +131,41 @@ has no literal equivalent — you match on *energy*, looser.
 
 ---
 
-## Downstream (not included)
+## Stage 4 — Audition (`04_audition.py`)
 
-- **Audition** — cut every candidate to a padded preview, review in a board with
-  players + keep flags. (Build to taste.)
-- **Clean** — loudnorm to a target level, bandpass for character, trim, fades.
-  Cut finals from **original** source, not the 16 kHz WAV.
-- **Package** — assemble into whatever your target wants (game soundbank, JSON
-  manifest, sampler, etc.).
+Turn ranked candidates into your actual picks. Shares `downstream.py` helpers;
+needs ffmpeg, not the GPU.
+
+### `sample`  *(CPU)*
+Cuts a padded preview per top-N candidate (N = `AUDITION_TOP_N`) from the 16 kHz
+WAV into `work/<project>/audition/`, and emits `audition.html` — a keep/reject
+board grouped by pool (players, localStorage, same pattern as the Stage 2 tagger).
+
+### Keep (human)
+Serve `work/<project>/` over HTTP, open the board, play lines, **Keep** the ones
+you want. Export `picks.json`.
+
+### `import <picks.json>`
+Loads the kept `(pool, utterance)` pairs into the `picks` table.
+
+## Stage 5 — Clean (`05_clean.py`)  *(CPU)*
+
+For every pick, re-cut the span from the **original source** video
+(`episodes.path`) at full quality — **not** the 16 kHz ML WAV — then loudnorm to
+`LOUDNORM_LUFS`, optional `BANDPASS_HZ`, and head/tail fades (`FADE_MS`). Keeps
+the intentional `CLEAN_PAD_S` padding; does **not** silence-trim (that would
+strip the padding and gut quiet clips). Outputs to `work/<project>/final/<pool>/`
+and records them in the `finals` table.
+
+## Stage 6 — Package (`06_package.py`)  *(CPU)*
+
+Assembles the finals into a deliverable. **Generic default:** copy clips into
+`package/<pool>/` + write `manifest.json` (each pool → its wired game events →
+its clips). **Project override:** if `projects/<name>/package.py` defines
+`package(ctx)`, that runs instead for a target-specific layout — e.g.
+`archer_wot` emits Wwise `RC_<pool>/` Random Container folders plus a
+`wwise_import.csv`. This is the "projects may carry code" pattern; the hook
+composes the shared `downstream.py` helpers.
 
 ## Schema (the important tables)
 
@@ -152,4 +179,6 @@ has no literal equivalent — you match on *energy*, looser.
 - `pools`, `pool_events`, `pool_candidates` — pool definitions, their mapped
   game events, and ranked line matches.
 - `text_emb` — cached MiniLM text embeddings for utterances (Stage 3).
+- `picks` — kept `(pool, utterance)` pairs from the audition (Stage 4).
+- `finals` — cleaned final clips per pick, with output path (Stage 5).
 - `jobs` — per-episode, per-stage progress (the resumability backbone).

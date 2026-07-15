@@ -23,18 +23,23 @@ SQLite database plus ranked candidate lists; what you do with them is up to you.
   episode, duration, and an attributed **character/speaker name**.
 - A **full-text search index** (FTS5) over every line.
 - Per-event **ranked candidate lists** combining keyword and semantic search.
-- Preview audio clips for auditioning.
+- Preview audio clips for auditioning, and **cleaned, packaged final clips**
+  with a manifest mapping them to your target's events.
 
-## The three stages
+## The six stages
 
 | Stage | Script | Does | Compute |
 |-------|--------|------|---------|
 | 1. Index | `pipeline/01_index.py` | demux audio → transcribe (WhisperX) → diarize (pyannote) → index to SQLite+FTS5 | GPU |
 | 2. Identify | `pipeline/02_identify.py` | tag reference lines by hand → build neural voiceprint centroids → attribute every cluster to a name | GPU + ~1hr human |
 | 3. Match | `pipeline/03_match.py` | keyword (FTS5) + semantic (MiniLM) matching of lines to your event list | GPU |
+| 4. Audition | `pipeline/04_audition.py` | preview ranked candidates in a browser board → keep/reject → record picks | ffmpeg + human |
+| 5. Clean | `pipeline/05_clean.py` | re-cut picks from original source, loudnorm + fades | ffmpeg |
+| 6. Package | `pipeline/06_package.py` | assemble clips + manifest; optional project-specific layout | ffmpeg |
 
-Diagnostics (`pipeline/diag_*.py`, `pipeline/mfcc_coherence.py`) are optional
-tools for validating speaker separation; see `docs/pipeline.md`.
+Stages 1–3 need the GPU; 4–6 need only ffmpeg. Diagnostics
+(`pipeline/diag_*.py`, `pipeline/mfcc_coherence.py`) are optional tools for
+validating speaker separation; see `docs/pipeline.md`.
 
 ## Requirements
 
@@ -73,7 +78,17 @@ python pipeline/02_identify.py --project archer_wot assign --threshold 0.50
 python pipeline/03_match.py --project archer_wot events
 python pipeline/03_match.py --project archer_wot match
 python pipeline/03_match.py --project archer_wot show <pool_id>
+
+python pipeline/04_audition.py --project archer_wot sample
+#   ... keep the lines you want in the browser, export picks.json ...
+python pipeline/04_audition.py --project archer_wot import work/archer_wot/picks.json
+python pipeline/05_clean.py --project archer_wot
+python pipeline/06_package.py --project archer_wot
 ```
+
+Stages 4–6 (audition → clean → package) need **ffmpeg**, not the GPU. Stage 5
+re-cuts finals from the original source at full quality; Stage 6 writes a
+manifest (and, for `archer_wot`, a Wwise-oriented layout via its `package.py`).
 
 Each project's data lives under `work/<project>/` (e.g. `work/archer_wot/corpus.db`).
 
