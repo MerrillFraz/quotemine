@@ -7,7 +7,7 @@ This shows the per-line fingerprint agreement and which lines the filter
 would keep vs drop — so you can confirm it works on real voices before it
 goes anywhere near the sampler.
 
-    python probe_coherence.py --season 6 --episode 3 --speaker SPEAKER_04
+    python pipeline/diag_coherence.py --group 6 --item 3 --speaker SPEAKER_04
 """
 
 import argparse
@@ -17,6 +17,7 @@ from pathlib import Path
 
 import numpy as np
 from mfcc_coherence import mfcc_fingerprint, coherent_subset, COHERENCE_COS
+from project import load_project
 
 
 def load_span(wav, s, e):
@@ -29,20 +30,22 @@ def load_span(wav, s, e):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--workdir", default=str(Path(__file__).resolve().parent.parent / "work"))
-    ap.add_argument("--season", type=int, required=True)
-    ap.add_argument("--episode", type=int, required=True)
+    ap.add_argument("--project", default="archer_wot")
+    ap.add_argument("--workdir", default=None)
+    ap.add_argument("--group", type=int, required=True, help="group_idx (e.g. season)")
+    ap.add_argument("--item", type=int, required=True, help="item_idx (e.g. episode)")
     ap.add_argument("--speaker", required=True)
     ap.add_argument("--min-s", type=float, default=0.7)
     ap.add_argument("--max-s", type=float, default=2.2)
     a = ap.parse_args()
 
-    db = sqlite3.connect(Path(a.workdir) / "corpus.db")
+    proj = load_project(a.project, a.workdir)
+    db = sqlite3.connect(proj.workdir / "corpus.db")
     db.row_factory = sqlite3.Row
-    ep = db.execute("SELECT id, wav_path FROM episodes WHERE season=? AND episode=?",
-                    (a.season, a.episode)).fetchone()
+    ep = db.execute("SELECT id, wav_path FROM episodes WHERE group_idx=? AND item_idx=?",
+                    (a.group, a.item)).fetchone()
     if not ep:
-        raise SystemExit("episode not found")
+        raise SystemExit("item not found")
 
     rows = db.execute(
         "SELECT start_s, end_s, text FROM utterances "
@@ -62,7 +65,7 @@ def main():
     S = F @ F.T
     keep = set(coherent_subset(fps))
 
-    print(f"\nS{a.season:02d}E{a.episode:02d} {a.speaker} — {len(rows)} candidate lines")
+    print(f"\n{proj.label(a.group, a.item)} {a.speaker} — {len(rows)} candidate lines")
     print(f"coherence threshold: {COHERENCE_COS}\n")
     medoid = int(S.sum(axis=1).argmax())
     print(f"{'#':>2} {'keep':>5} {'vs medoid':>10}  text")

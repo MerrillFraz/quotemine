@@ -7,7 +7,7 @@ voices (Krieger/Cyril/Pam) where MFCC-mean fingerprints failed.
 Runs on ONE cluster. If the intruder lines separate here, the full purity pass
 is worth it. If they don't, Option A is no better than Option B and we stop.
 
-    python verify_embedding.py --season 6 --episode 3 --speaker SPEAKER_04
+    python pipeline/diag_embedding.py --group 6 --item 3 --speaker SPEAKER_04
 """
 
 import argparse
@@ -17,6 +17,8 @@ import wave
 from pathlib import Path
 
 import numpy as np
+
+from project import load_project
 
 
 CANDIDATES = [
@@ -55,9 +57,10 @@ def embed_pyannote(inf, sig, sr):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--workdir", default=str(Path(__file__).resolve().parent.parent / "work"))
-    ap.add_argument("--season", type=int, required=True)
-    ap.add_argument("--episode", type=int, required=True)
+    ap.add_argument("--project", default="archer_wot")
+    ap.add_argument("--workdir", default=None)
+    ap.add_argument("--group", type=int, required=True, help="group_idx (e.g. season)")
+    ap.add_argument("--item", type=int, required=True, help="item_idx (e.g. episode)")
     ap.add_argument("--speaker", required=True)
     ap.add_argument("--min-s", type=float, default=0.7)
     ap.add_argument("--max-s", type=float, default=2.5)
@@ -91,16 +94,17 @@ def main():
     kind, inf = loader
 
     # --- pull the cluster's lines ---
-    db = sqlite3.connect(Path(a.workdir) / "corpus.db")
+    proj = load_project(a.project, a.workdir)
+    db = sqlite3.connect(proj.workdir / "corpus.db")
     db.row_factory = sqlite3.Row
-    ep = db.execute("SELECT id, wav_path FROM episodes WHERE season=? AND episode=?",
-                    (a.season, a.episode)).fetchone()
+    ep = db.execute("SELECT id, wav_path FROM episodes WHERE group_idx=? AND item_idx=?",
+                    (a.group, a.item)).fetchone()
     rows = db.execute(
         "SELECT start_s, end_s, text FROM utterances "
         "WHERE episode_id=? AND speaker=? AND duration_s BETWEEN ? AND ? ORDER BY start_s",
         (ep["id"], a.speaker, a.min_s, a.max_s)).fetchall()
     print(f"\nmodel: {model_used}")
-    print(f"S{a.season:02d}E{a.episode:02d} {a.speaker} — {len(rows)} lines\n")
+    print(f"{proj.label(a.group, a.item)} {a.speaker} — {len(rows)} lines\n")
 
     vecs, texts = [], []
     for r in rows:
