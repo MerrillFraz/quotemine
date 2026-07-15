@@ -1,0 +1,96 @@
+# Tuning
+
+All knobs live as constants at the top of each stage script. Defaults were tuned
+on a 14-season animated series on a 12 GB RTX 3080; your corpus and card will
+differ. Re-run cost is noted per knob.
+
+---
+
+## Stage 1 — Index
+
+### `MAX_SPEAKERS` (diarize)
+The single most consequential knob. Set it **close to the real per-episode
+speaker ceiling** for your source.
+- Too high → 6–15x slower diarization for identical results (wasted search).
+- Too low → silent speaker merges (see `gotchas.md`).
+Check with a histogram of `COUNT(DISTINCT speaker)` per episode after a trial
+run. Re-run cost: full diarize pass (but it's often the fast stage — minutes,
+not hours).
+
+### `COMPUTE_TYPE`, `BATCH_SIZE` (transcribe)
+`float16` + `batch_size 16` suits a 12 GB Ampere card. Drop batch to 8 on OOM;
+drop to `int8` only if truly VRAM-starved (quality cost).
+
+### Utterance segmentation (index)
+`MAX_WORD_GAP_S`, `MIN_UTTERANCE_S`, `MAX_UTTERANCE_S` control how the word
+stream splits into utterances. **Cheap to retune** — the `index` step reads
+cached JSON, no GPU. Re-run in seconds and inspect the callout-window count.
+
+---
+
+## Stage 2 — Identify
+
+### Sampling filters (`sample`)
+- `MIN_SNR_DB` (default 8) — per-line cleanliness floor. Raise to hear only
+  pristine lines; lower if the pool is starved. Watch the reported drop count.
+- `TALK_FLOOR_S` (default 60) — skip clusters below this much total talk-time.
+  Raise to exclude bit-players (where merges concentrate); lower if you're
+  missing a genuinely minor character.
+- `UTT_MIN_S` / `UTT_MAX_S` — candidate length window. Shorter lines are purer
+  (less chance of spanning a speaker change) but carry less identity signal.
+  `ISOLATION_PAD_S` (default 0.5) — how much silence must flank a line for it to
+  count as isolated (no overlapping speaker).
+Re-run cost: re-cut previews (CPU, ~1–2 min). Existing browser tags survive
+(keyed by cluster identity).
+
+### `embed` — read the `tight` scores
+Not a knob, a gauge. Per-character mean self-similarity.
+- **> 0.5** — coherent centroid, proceed.
+- **< 0.45 (LOOSE)** — references disagree; a mis-tag slipped in or the lines are
+  too noisy. Re-tag before assigning.
+
+### `assign --threshold`
+The decision knob. Run `--dry-run` and read the similarity histogram:
+- Ideal shape is **bimodal** — a high mountain (real matches) and a low lump
+  (guests + merges). Put the threshold in the valley.
+- **Lean permissive** (lower threshold) if a downstream human audition step will
+  catch false positives anyway — recall matters more than precision when you have
+  a large candidate surplus and a human in the loop.
+- **Lean strict** (higher) if the attributions feed something automated with no
+  review.
+Re-run cost: the dry-run already did the GPU embedding; picking a new threshold
+and running for real is fast.
+
+`CLUSTER_EMBED_UTTS` (default 12) — how many isolated lines to average per
+cluster for its assignment vector. More = steadier vector, slower pass. 12 is a
+good balance; averaging is what rescues short-clip embedding noise.
+
+---
+
+## Stage 3 — Match
+
+### The `EVENTS` list
+The main thing you'll edit. Each event = keywords + description + suggested
+character. **Reconcile event names/IDs against your actual target** (for a game
+soundbank, the real event strings from the sound project). The names here are
+search labels; they don't have to match your target until you package.
+
+- **Keywords** drive the FTS pass — literal terms that might appear in a matching
+  line. Quote-safe (apostrophes handled).
+- **Description** drives the semantic pass — a natural-language sentence of what
+  the event *means*. This is where quality lives: "urgent, the enemy is capturing
+  our base" ranks far better than "base capture". Sharpen these using your
+  target's own event descriptions if it has them.
+
+### `TOP_SEMANTIC` (default 60)
+How many semantic hits to keep per event. Raise for more candidates to audition,
+lower for a tighter list. Re-run cost: instant (embeddings cached).
+
+### `KW_BONUS` (default 0.15)
+How much a keyword hit boosts a line's combined score above its raw semantic
+score. Raise to favor literal matches, lower to trust semantics more.
+
+### Candidate window (`CAND_MIN_S` / `CAND_MAX_S`)
+Duration filter for what's eligible as a candidate. Match this to your output's
+needs — game callouts want short (0.4–2.0 s); a general soundboard might want
+wider.
