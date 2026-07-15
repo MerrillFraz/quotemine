@@ -121,11 +121,19 @@ def cmd_sample(args, db):
     db.execute("DELETE FROM utt_pool")
 
     uid = 0
+    single_band = len(proj.BANDS) == 1
     for band_name, lo, hi in proj.BANDS:
-        eps = db.execute(
-            "SELECT id, group_idx, item_idx, wav_path FROM episodes "
-            "WHERE group_idx BETWEEN ? AND ? AND wav_path IS NOT NULL ORDER BY group_idx, item_idx",
-            (lo, hi)).fetchall()
+        if single_band:
+            # One implicit band covers everything, including items whose
+            # provenance didn't parse (group_idx IS NULL) — a flat game, say.
+            eps = db.execute(
+                "SELECT id, group_idx, item_idx, wav_path FROM episodes "
+                "WHERE wav_path IS NOT NULL ORDER BY group_idx, item_idx").fetchall()
+        else:
+            eps = db.execute(
+                "SELECT id, group_idx, item_idx, wav_path FROM episodes "
+                "WHERE group_idx BETWEEN ? AND ? AND wav_path IS NOT NULL ORDER BY group_idx, item_idx",
+                (lo, hi)).fetchall()
         if not eps:
             continue
         step = max(1, len(eps) // t["EPISODES_PER_BAND"])
