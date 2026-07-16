@@ -141,6 +141,11 @@ leave the rest. A <span class="star">&#9733;</span> marks a keyword hit. Export 
 const ROWS=__DATA__;
 const KEY="audition_v1";
 let picks=JSON.parse(localStorage.getItem(KEY)||"{}");   // key `${pool}|${uid}` -> 1
+// Keys on THIS board. Keeps persist in localStorage across re-samples, but if a
+// pool was retuned its old picks reference lines no longer on the board — count
+// and export only current-board keeps so stale picks can't ride along.
+const ROWKEYS=new Set(ROWS.map(r=>r.pool_id+"|"+r.utterance_id));
+const liveKeys=()=>Object.keys(picks).filter(k=>ROWKEYS.has(k));
 
 function render(){
   const tb=document.querySelector("#t tbody"); tb.innerHTML="";
@@ -164,18 +169,18 @@ function render(){
       +`<td class="txt">${(r.text||"").replace(/</g,"&lt;").slice(0,140)}<div class="who">${r.character} &middot; ${r.duration_s.toFixed(1)}s &middot; <span class="sc">sem ${r.sem.toFixed(2)}</span>${star}</div></td>`;
     tb.appendChild(tr);
   }
-  document.getElementById("count").textContent=`${shown} shown — ${Object.keys(picks).length} kept`;
+  document.getElementById("count").textContent=`${shown} shown — ${liveKeys().length} kept`;
   hud();
 }
 function hud(){
   const h=document.getElementById("hud"); h.innerHTML="";
   const per={};
-  for(const k of Object.keys(picks)){const p=k.split("|")[0]; per[p]=(per[p]||0)+1;}
+  for(const k of liveKeys()){const p=k.split("|")[0]; per[p]=(per[p]||0)+1;}
   const pools=[...new Set(ROWS.map(r=>r.pool_id))];
   for(const p of pools){const d=document.createElement("div"); d.className="cc"; d.innerHTML=`<b>${p}</b> ${per[p]||0}`; h.appendChild(d);}
   const b=document.createElement("button"); b.id="exp"; b.textContent="Export picks.json";
   b.onclick=()=>{
-    const out=Object.keys(picks).map(k=>{const [pool_id,uid]=k.split("|"); return {pool_id, utterance_id:Number(uid)};});
+    const out=liveKeys().map(k=>{const [pool_id,uid]=k.split("|"); return {pool_id, utterance_id:Number(uid)};});
     const a=document.createElement("a");
     a.href=URL.createObjectURL(new Blob([JSON.stringify(out,null,2)],{type:"application/json"}));
     a.download="picks.json"; a.click();
