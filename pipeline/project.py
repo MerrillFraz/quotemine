@@ -58,8 +58,17 @@ DEFAULT_TUNING = {
     # Stage 3 — match
     "CAND_MIN_S": 0.4,
     "CAND_MAX_S": 2.2,
+    # Optional per-pool duration overrides {pool_id: (min_s, max_s)} for pools
+    # whose lines aren't terse callouts — e.g. a battle-start rally runs 3-6s.
+    # Pools not listed use the global CAND_MIN_S/CAND_MAX_S above.
+    "POOL_CAND_WINDOWS": {},
     "TOP_SEMANTIC": 60,
     "KW_BONUS": 0.08,
+    # Optional per-pool keyword-bonus overrides {pool_id: bonus}. For pools where
+    # the literal words ARE the signal (terse trash-talk that scores low on
+    # semantic similarity), a large bonus floats keyword hits to the top of the
+    # board. Pools not listed use the global KW_BONUS.
+    "POOL_KW_BONUS": {},
     # Stage 4 — audition
     "AUDITION_TOP_N": 25,       # candidates per pool put on the board
     "PREVIEW_PAD_S": 0.15,      # padding around preview clips

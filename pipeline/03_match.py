@@ -144,28 +144,68 @@ def load_text_matrix(db, ids):
 # match
 # ---------------------------------------------------------------------------
 
+def embedding_window(cand_min_s, cand_max_s, pool_windows):
+    """The union of the global candidate window and every per-pool override —
+    the duration range to embed once so a pool with a wider window has its
+    longer lines available. Pure; unit-tested."""
+    return (min([cand_min_s] + [w[0] for w in pool_windows.values()]),
+            max([cand_max_s] + [w[1] for w in pool_windows.values()]))
+
+
+def window_positions(ids, durs, pmin, pmax):
+    """Indices into `ids` whose utterance duration falls in [pmin, pmax], used
+    to restrict the ranked set to one pool's window. Pure; unit-tested."""
+    return [k for k, uid in enumerate(ids) if pmin <= durs[uid] <= pmax]
+
+
+def combined_score(sem, is_kw, bonus):
+    """A candidate's board-ranking score: semantic similarity plus the (possibly
+    per-pool) keyword bonus when it's a keyword hit. A large per-pool bonus floats
+    terse keyword gold above higher-semantic non-keyword lines. Pure; unit-tested."""
+    return sem + (bonus if is_kw else 0.0)
+
+
 def cmd_match(args, db):
     t = args.proj.TUNING
     cand_min_s, cand_max_s = t["CAND_MIN_S"], t["CAND_MAX_S"]
     top_semantic, kw_bonus = t["TOP_SEMANTIC"], t["KW_BONUS"]
+    # Per-pool duration windows override the global one for pools whose lines
+    # aren't terse callouts (e.g. a 3-6s battle-start rally). Pools not listed
+    # use the global window. See docs/tuning.md.
+    pool_windows = t.get("POOL_CAND_WINDOWS", {}) or {}
+    # Per-pool keyword bonus: float literal hits for pools where the words are
+    # the signal (terse trash-talk). Pools not listed use the global KW_BONUS.
+    pool_kw_bonus = t.get("POOL_KW_BONUS", {}) or {}
     if not db.execute("SELECT 1 FROM pools LIMIT 1").fetchone():
         load_pools(db, args.proj.POOLS)
 
+    # Embed the UNION of every window in use, so a pool with a wider window has
+    # its longer lines available; each pool then filters M to its own window.
+    emb_min, emb_max = embedding_window(cand_min_s, cand_max_s, pool_windows)
+
     embed = make_text_embedder()
-    cand_ids = ensure_text_embeddings(db, embed, cand_min_s, cand_max_s)
+    cand_ids = ensure_text_embeddings(db, embed, emb_min, emb_max)
     ids, M = load_text_matrix(db, cand_ids)
     if not ids:
         sys.exit("No candidate embeddings. Did Stage 2 attribute characters?")
     id_pos = {uid: k for k, uid in enumerate(ids)}
+    durs = {r["id"]: r["duration_s"]
+            for r in db.execute("SELECT id, duration_s FROM utterances")}
 
     pools = db.execute("SELECT * FROM pools").fetchall()
     pool_vecs = embed([p["description"] for p in pools])
 
     db.execute("DELETE FROM pool_candidates")
     for p, pv in zip(pools, pool_vecs):
-        sims = M @ pv
-        order = np.argsort(-sims)[:top_semantic]
-        cand = {ids[k]: float(sims[k]) for k in order}
+        pmin, pmax = pool_windows.get(p["pool_id"], (cand_min_s, cand_max_s))
+        # Restrict the ranked set to this pool's duration window.
+        win_pos = window_positions(ids, durs, pmin, pmax)
+        if win_pos:
+            sims = M[win_pos] @ pv
+            order = np.argsort(-sims)[:top_semantic]
+            cand = {ids[win_pos[k]]: float(sims[k]) for k in order}
+        else:
+            cand = {}
 
         kw_ids = set()
         # A pool may legitimately carry no keywords — e.g. a mechanical event
@@ -177,9 +217,10 @@ def cmd_match(args, db):
                 "SELECT u.id FROM utterances u "
                 "WHERE u.character IS NOT NULL AND u.duration_s BETWEEN ? AND ? "
                 "AND u.id IN (SELECT rowid FROM utterances_fts WHERE utterances_fts MATCH ?)",
-                (cand_min_s, cand_max_s, terms)):
+                (pmin, pmax, terms)):
                 kw_ids.add(r["id"])
 
+        bonus = pool_kw_bonus.get(p["pool_id"], kw_bonus)
         rows = []
         for uid in (set(cand) | kw_ids):
             sem = cand.get(uid)
@@ -187,7 +228,7 @@ def cmd_match(args, db):
                 sem = float(M[id_pos[uid]] @ pv)
             sem = sem if sem is not None else 0.0
             kw = 1 if uid in kw_ids else 0
-            rows.append((p["pool_id"], uid, kw, sem, sem + (kw_bonus if kw else 0.0)))
+            rows.append((p["pool_id"], uid, kw, sem, combined_score(sem, kw, bonus)))
         db.executemany("INSERT OR REPLACE INTO pool_candidates VALUES (?,?,?,?,?)", rows)
     db.commit()
     print("\n[match] done.")
