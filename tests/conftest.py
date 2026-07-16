@@ -35,6 +35,11 @@ def identify_mod():
 
 
 @pytest.fixture(scope="session")
+def match_mod():
+    return _load("pipeline/03_match.py", "match_stage")
+
+
+@pytest.fixture(scope="session")
 def audition_mod():
     return _load("pipeline/04_audition.py", "audition_stage")
 
