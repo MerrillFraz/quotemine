@@ -129,6 +129,34 @@ Duration filter for what's eligible as a candidate. Match this to your output's
 needs — game callouts want short (0.4–2.0 s); a general soundboard might want
 wider.
 
+### `POOL_CAND_WINDOWS` (default `{}`) — per-pool duration override
+`{pool_id: (min_s, max_s)}` overrides the global `CAND_MIN_S`/`CAND_MAX_S` for
+pools whose lines *aren't* terse callouts. The global window is tuned for short
+barks, so a longer beat gets filtered out before matching ever sees it — a
+battle-start rally line runs 3–6 s and can never surface under a 2.2 s cap.
+```python
+"POOL_CAND_WINDOWS": {"battle_start": (3.0, 7.5)},
+```
+Pools not listed keep the global window. `match` embeds the **union** of all
+windows once (cached) and then filters each pool to its own, so adding one wide
+pool doesn't disturb the candidates (or your existing picks) for any other pool.
+Re-run cost: one-time embed of the newly-eligible longer lines, then instant.
+
+### `POOL_KW_BONUS` (default `{}`) — per-pool keyword-bonus override
+`{pool_id: bonus}` overrides the global `KW_BONUS` for pools where the **literal
+words are the signal**. Some beats are carried by terse trash-talk ("Nailed it",
+"Boom", "Rampage!") that scores *low* on semantic similarity — so a good keyword
+hit stays buried under mediocre semantic lines. A large per-pool bonus floats the
+keyword hits to the top of the board instead:
+```python
+"POOL_KW_BONUS": {"you_penetrated": 0.6},   # vs global KW_BONUS ~0.03
+```
+Pair it with a **tight, distinctive** keyword list (a floated bonus surfaces
+*every* keyword hit, so noisy terms show too — the FTS tokenizer also stems, e.g.
+`hurt` matches `hurtful`). Pools not listed use the global `KW_BONUS`. Re-run
+cost: instant (embeddings cached) — but remember to run `events` before `match`
+whenever you change a pool's keywords.
+
 ---
 
 ## Stages 4–6 — Downstream

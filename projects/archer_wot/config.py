@@ -69,8 +69,22 @@ TUNING = {
     "DEFAULT_THRESHOLD": 0.50,
     "CAND_MIN_S": 0.4,
     "CAND_MAX_S": 2.2,
+    # battle_start is a rally line (usually 3-6s), not a terse callout, so it
+    # gets a wider window; every other pool keeps the global 0.4-2.2s callout
+    # window. See docs/tuning.md (POOL_CAND_WINDOWS).
+    "POOL_CAND_WINDOWS": {"battle_start": (3.0, 7.5)},
     "TOP_SEMANTIC": 60,
-    "KW_BONUS": 0.08,
+    "KW_BONUS": 0.03,
+    # Float keyword hits to the top of the board for pools where the literal
+    # words are the signal (terse trash-talk / frustration / relief that scores
+    # low on semantic similarity), instead of burying them under mediocre
+    # semantics. you_penetrated leans hardest on this.
+    "POOL_KW_BONUS": {
+        "you_penetrated": 0.6,
+        "you_no_pen": 0.4,
+        "fire_out": 0.4,
+        "base_captured": 0.4,
+    },
     "AUDITION_TOP_N": 25,
     "PREVIEW_PAD_S": 0.15,
     "CLEAN_PAD_S": 0.10,
@@ -90,19 +104,25 @@ TUNING = {
 #   keywords    -> FTS pass (literal, distinctive terms; avoid stopwords)
 #   description -> semantic pass (natural-language meaning of the event)
 #   game_events -> the real vo_* IDs this pool's container will be wired to
+#
+# Retune note: for a source with no literal tank vocabulary, the FTS keyword
+# pass mostly surfaces false friends ("lost"->"lost consciousness"), so keywords
+# are blanked on the combat/mechanical pools and kept only where a term is
+# genuinely distinctive. Descriptions are POV-locked (aggressor vs. victim) and
+# describe the emotional beat, not the tank mechanic ("match the vibe, not the
+# verb"). KW_BONUS is lowered to 0.03 so surviving keyword hits can't outrank a
+# better semantic match. See docs/tuning.md.
 POOLS = [
     # ---- Combat: braggy tier (the player did it) ----------------------------
-    ("you_penetrated", "You penetrated", "Archer",
-     "through them nailed clean",
-     "triumphant, you punched a shot clean through the enemy armor and dealt damage",
+    ("you_penetrated", "You penetrated", "Archer", "nailed boom hurt rampage",
+     "cocky and gloating right after you hit and hurt someone — trash-talking, taunting them that they just got nailed",
      ["vo_enemy_hp_damaged_by_projectile_by_player",
       "vo_enemy_hp_damaged_by_projectile_and_gun_damaged_by_player",
       "vo_enemy_hp_damaged_by_projectile_and_chassis_damaged_by_player",
       "vo_enemy_hp_damaged_by_explosion_at_direct_hit_by_player"]),
 
-    ("you_no_pen", "You failed to penetrate", "Archer",
-     "bounced nothing armor thick useless",
-     "frustrated, your shot hit the enemy but failed to penetrate their armor",
+    ("you_no_pen", "You failed to penetrate", "Archer", "dammit goddammit kidding",
+     "exasperated and pissed off that your attack did nothing — frustrated cursing and disbelief, oh come on, you have got to be kidding me, useless",
      ["vo_armor_not_pierced_by_player",
       "vo_enemy_no_hp_damage_at_no_attempt_by_player",
       "vo_enemy_no_hp_damage_at_attempt_and_gun_damaged_by_player",
@@ -110,87 +130,72 @@ POOLS = [
       "vo_enemy_no_hp_damage_at_no_attempt_and_gun_damaged_by_player",
       "vo_enemy_no_hp_damage_at_no_attempt_and_chassis_damaged_by_player"]),
 
-    ("you_ricochet", "Your shot ricocheted", "Archer",
-     "bounced off skipped ricochet glanced",
-     "your shot glanced off the enemy armor and ricocheted away, no damage",
+    ("you_ricochet", "Your shot ricocheted", "Archer", "",
+     "dismissive and mocking that it just bounced off harmlessly and did nothing at all",
      ["vo_armor_ricochet_by_player"]),
 
-    ("you_splashed", "You splashed them", "Archer",
-     "covered them close blast splash",
-     "your high-explosive shell splashed and covered the enemy in the blast",
+    ("you_splashed", "You splashed them", "Archer", "",
+     "a close blast that still caught them — not a direct hit but they felt it",
      ["vo_damage_by_near_explosion_by_player"]),
 
-    ("you_set_fire", "You set them ablaze", "Cheryl",
-     "fire burning lit ablaze cook",
-     "gleeful, you set the enemy tank on fire",
+    ("you_set_fire", "You set them ablaze", "Cheryl", "burning ablaze cook lit",
+     "gleeful, almost gloating, that you set them on fire and they're burning",
      ["vo_enemy_fire_started_by_player"]),
 
-    ("you_killed_enemy", "You destroyed an enemy", "Archer",
-     "dead killed destroyed done boom next",
-     "triumphant and smug, you personally destroyed an enemy tank",
+    ("you_killed_enemy", "You destroyed an enemy", "Archer", "killed dead boom",
+     "cocky and triumphant right after getting a kill — a smug one-liner over a fresh body, someone's dead and you're pleased with yourself",
      ["vo_enemy_killed_by_player"]),
 
     # ---- Combat: neutral / ally ---------------------------------------------
-    ("enemy_down", "An enemy went down", "Archer",
-     "down less gone another dead",
-     "an enemy tank was destroyed by an ally, acknowledged",
+    ("enemy_down", "An enemy went down", "Archer", "",
+     "casually acknowledging that another one just went down — noting a kill without taking credit",
      ["vo_enemy_killed", "vo_vehicle_destroyed"]),
 
-    ("team_kill", "You hit an ally", "Cyril",
-     "sorry accident oops wasn't friendly whoops",
-     "awkward, you damaged or killed a friendly tank by mistake",
+    ("team_kill", "You hit an ally", "Cyril", "sorry oops whoops accident",
+     "awkward, sheepish apology for screwing up and hitting one of your own by mistake",
      ["vo_ally_killed_by_player"]),
 
     # ---- Your tank: taking damage -------------------------------------------
-    ("took_damage", "Module damaged", "Archer",
-     "hit hurt ow took broken",
-     "you took a hit and a module was damaged",
+    ("took_damage", "Module damaged", "Archer", "",
+     "reacting to suddenly taking a hit — pain, alarm, something on you just got hurt or broke",
      ["vo_gun_damaged", "vo_engine_damaged", "vo_track_damaged",
       "vo_radio_damaged", "vo_fuel_tank_damaged", "vo_surveying_devices_damaged",
       "vo_turret_rotator_damaged", "vo_ammo_bay_damaged"]),
 
-    ("module_wrecked", "Module destroyed", "Archer",
-     "wrecked gone destroyed shot dead useless",
-     "a critical hit destroyed one of your modules",
+    ("module_wrecked", "Module destroyed", "Archer", "",
+     "alarm that something critical just got wrecked and is now completely useless — a bad, disabling hit",
      ["vo_gun_destroyed", "vo_engine_destroyed", "vo_track_destroyed",
       "vo_surveying_devices_destroyed", "vo_turret_rotator_destroyed"]),
 
-    ("crew_down", "Crew knocked out", "Malory",
-     "down hurt cold hit man passed",
-     "one of your crew was concussed and knocked out",
+    ("crew_down", "Crew knocked out", "Malory", "passed knocked",
+     "concern that one of your people just got hurt and knocked out — someone's down",
      ["vo_commander_killed", "vo_driver_killed", "vo_gunner_killed",
       "vo_loader_killed", "vo_radioman_killed", "vo_crew_deactivated"]),
 
-    ("repaired", "Module repaired", "Krieger",
-     "fixed working back again running",
-     "a damaged module or the crew was repaired and is working again",
+    ("repaired", "Module repaired", "Krieger", "",
+     "relieved acknowledgment that it's working again and you're back in action — there we go, good to go, back in business, all set",
      ["vo_gun_functional", "vo_engine_functional", "vo_track_functional",
       "vo_track_functional_can_move", "vo_surveying_devices_functional",
       "vo_turret_rotator_functional"]),
 
-    ("on_fire", "On fire", "Cheryl",
-     "fire burning flames hot smoke put",
-     "alarm, your tank has caught fire and is burning",
+    ("on_fire", "On fire", "Cheryl", "burning",
+     "panic and alarm that you yourself are on fire and burning — needs to be put out now",
      ["vo_fire_started"]),
 
-    ("fire_out", "Fire extinguished", "Archer",
-     "extinguished done relief handled",
-     "relief, the fire on your tank has been put out",
+    ("fire_out", "Fire extinguished", "Archer", "handled",
+     "relief that the emergency is over and dealt with — handled it, all good now, crisis averted, we're okay",
      ["vo_fire_stopped"]),
 
     # ---- Battle flow --------------------------------------------------------
-    ("battle_start", "Battle start", "Archer",
-     "start begin ready move people",
-     "the battle is beginning, rallying the crew as it kicks off",
+    ("battle_start", "Battle start", "Archer", "",
+     "rallying the crew as things kick off — here we go, get ready, let's move",
      ["vo_start_battle"]),
 
-    ("base_captured", "Base captured", "Archer",
-     "cap base taken ours point captured",
-     "the base has been captured",
+    ("base_captured", "Base captured", "Archer", "captured victory",
+     "satisfaction that the objective is taken and it's ours now — we did it, we won, the position is ours",
      ["vo_target_captured"]),
 
-    ("target_lost", "Target lost", "Lana",
-     "gone lost vanished slipped away",
-     "you lost sight of the enemy target",
+    ("target_lost", "Target lost", "Lana", "",
+     "they slipped away and you've lost track of them — gone, out of sight, can't find them now",
      ["vo_target_lost", "vo_target_unlocked"]),
 ]

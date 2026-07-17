@@ -24,3 +24,6 @@ work/
 .DS_Store
 Thumbs.db
 CLAUDE.local.md
+
+# Local, machine-specific VS Code workspace (hard-codes a /mnt/c path)
+*.code-workspace

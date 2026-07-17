@@ -167,6 +167,23 @@ its clips). **Project override:** if `projects/<name>/package.py` defines
 `wwise_import.csv`. This is the "projects may carry code" pattern; the hook
 composes the shared `downstream.py` helpers.
 
+The `archer_wot` hook also emits everything the Wwise + `.wotmod` build needs:
+`audio_mods.xml` (WoT's event-remap descriptor — every original `vo_*` event
+redirected to that pool's `vo_qm_<pool>` mod event, generated straight from the
+pool→events map), `meta.xml` (the `.wotmod` manifest), and `wwise_events.txt`
+(the per-pool checklist for the Wwise GUI). See `projects/archer_wot/WWISE.md`
+for the full build walkthrough.
+
+## Assemble the mod (`build_wotmod.py`)  *(CPU, WoT-specific)*
+
+WoT sound mods are **additive event-remaps**, not soundbank overwrites: the game
+loads your `.bnk` alongside its own and redirects events. After you build the
+soundbank in Wwise (the one GUI/Windows step — see `WWISE.md`),
+`pipeline/build_wotmod.py --project <name> --banks <GeneratedSoundBanks/WinHighRes>`
+bundles the generated `.bnk` + `audio_mods.xml` + `meta.xml` into an installable
+`res/audioww/…` tree, zipped (STORED) as `<Mod>.wotmod`. It fails loudly if a
+bank named in the descriptor is missing from `--banks`.
+
 ## Schema (the important tables)
 
 - `episodes` — one row per source file; `group_idx`/`item_idx` (ordered
