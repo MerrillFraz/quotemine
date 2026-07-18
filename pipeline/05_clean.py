@@ -58,7 +58,7 @@ def main():
 
     final_root = proj.workdir / "final"
     db.execute("DELETE FROM finals")
-    done = missing = 0
+    done = missing = empty = 0
     for r in picks:
         if not r["src"] or not Path(r["src"]).exists():
             print(f"  [skip] source missing for utt {r['utterance_id']}: {r['src']}")
@@ -69,11 +69,18 @@ def main():
         out = pool_dir / f"{r['utterance_id']}_{_slug(r['character'])}.wav"
         tmp = pool_dir / f".raw_{r['utterance_id']}.wav"
         try:
-            # per-clip lead-in/lead-out from Stage 4 rides on top of CLEAN_PAD_S
-            downstream.cut_from_source(
-                r["src"], r["start_s"], r["end_s"], tmp,
-                pad_head=t["CLEAN_PAD_S"] + (r["head_s"] or 0.0),
-                pad_tail=t["CLEAN_PAD_S"] + (r["tail_s"] or 0.0))
+            # per-clip lead-in/lead-out from Stage 4 rides on top of CLEAN_PAD_S.
+            # An over-tightened delta can drive the span <= 0; cut returns False
+            # without writing tmp, so skip rather than hand clean_audio a missing
+            # file (an ffmpeg error there would abort the whole batch pre-commit).
+            if not downstream.cut_from_source(
+                    r["src"], r["start_s"], r["end_s"], tmp,
+                    pad_head=t["CLEAN_PAD_S"] + (r["head_s"] or 0.0),
+                    pad_tail=t["CLEAN_PAD_S"] + (r["tail_s"] or 0.0)):
+                print(f"  [skip] empty span for utt {r['utterance_id']} "
+                      f"(head_s/tail_s too tight)")
+                empty += 1
+                continue
             downstream.clean_audio(tmp, out, lufs=t["LOUDNORM_LUFS"],
                                    bandpass_hz=t["BANDPASS_HZ"], fade_ms=t["FADE_MS"])
         finally:
@@ -84,7 +91,8 @@ def main():
         done += 1
     db.commit()
     print(f"\n[clean] {done} clips cleaned into {final_root}"
-          + (f"  ({missing} skipped: source missing)" if missing else ""))
+          + (f"  ({missing} skipped: source missing)" if missing else "")
+          + (f"  ({empty} skipped: empty span)" if empty else ""))
     db.close()
 
 

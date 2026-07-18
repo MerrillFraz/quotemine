@@ -37,6 +37,19 @@ def test_span_bounds_floors_at_zero_near_file_head():
     assert ss == 0.0
 
 
+def test_cut_span_empty_span_returns_false_without_ffmpeg(tmp_path, monkeypatch):
+    # an over-tightened per-clip delta can drive dur <= 0; cut_span must bail
+    # (return False) BEFORE invoking ffmpeg, so Stage 5 can skip it rather than
+    # feed clean_audio a file that was never written.
+    called = []
+    monkeypatch.setattr(downstream, "_ffmpeg", lambda args: called.append(args))
+    out = tmp_path / "x.wav"
+    ok = downstream.cut_span("src.mkv", 1.0, 1.2, out, pad_head=-0.5, pad_tail=-0.5)
+    assert ok is False
+    assert called == []            # never reached ffmpeg
+    assert not out.exists()
+
+
 # --- write_manifest ---------------------------------------------------------
 
 def test_manifest_groups_clips_by_pool_with_events(tmp_path):

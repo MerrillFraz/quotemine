@@ -263,6 +263,9 @@ function winStop(){
   if(winAudio.currentTime>=winEndAt){ winAudio.pause(); winRAF=null; return; }
   winRAF=requestAnimationFrame(winStop);
 }
+// Backstop: out+ can push winEndAt past the clip's end, where currentTime never
+// reaches it — end the poll when playback finishes on its own.
+winAudio.addEventListener("ended",()=>{ if(winRAF!=null){cancelAnimationFrame(winRAF); winRAF=null;} });
 function playWindow(r,o){
   const winStart=Math.max(0, r.clip_head - BASEPAD - o.h);
   winEndAt=r.clip_head + r.duration_s + BASEPAD + o.t;
