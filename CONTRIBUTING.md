@@ -32,8 +32,10 @@ against real audio.
 
 ## Pull requests
 
-- `main` is protected: all changes land via PR (no direct pushes). No review
-  approval is required, but keep PRs small and self-explanatory.
+- `main` is protected: all changes land via PR (no direct pushes). Anyone can
+  contribute by opening a PR from a fork — you don't need write access.
+- Every PR needs an approving review from a code owner (see
+  `.github/CODEOWNERS`) before it can merge. Keep PRs small and self-explanatory.
 - Conventional commit subjects: `feat:`, `fix:`, `docs:`, `refactor:` — under
   72 characters.
 - Keep the engine/project split: `pipeline/` stays corpus-agnostic; anything
