@@ -103,6 +103,37 @@ Use `package/README.txt` as the description; submit the `.wotmod` + a
 screenshot/clip via Aslain's site/forum. For immediate personal use, his
 `Aslain_Modpack/Custom_mods/` folder is a local-include dropzone.
 
+## Updating clips (re-tune or drop) — the structure is already built
+
+Re-running Stages 4–6 (after tuning lead-in/out or dropping a clip) rebuilds
+`package/`, but your `.wproj` already has the work unit, `RC_*` containers,
+events, and the `quotemine` bank — you are **not** rebuilding those. Two things
+Wwise will NOT do for you:
+
+**1. Refresh changed audio — Add FILES into the container, never Add Folders.**
+The clips live *inside* Random Containers. `Import Audio Files` (Shift+I) with
+**Add Folders** always lands audio at the *folder* level: it drops the new files
+as loose sounds **beside** the container (so the container keeps the OLD audio and
+nothing actually updates), or — if the container sits at the top level — creates a
+duplicate `RC_<pool>_01`. "Replace on collision" does not save you; it only
+matches when the path lines up, which folder-import breaks. Instead: select the
+target **Random Container** (the dice icon) as the destination, use **Add Files**,
+pick that pool's WAVs from `package/RC_<pool>/`, import as **Sound SFX**.
+Same-named children get their sources replaced in place — no loose sounds, no
+`_01`. One pass per changed pool; verify each container's child count against
+`wwise_events.txt`.
+
+**2. Remove dropped clips — Wwise won't.** A clip you un-kept in Stage 4 is gone
+from `package/`, but its Sound SFX object still sits in its container from the
+first build and **will still ship** unless you delete it (Project Explorer search
+box → type the `<utt>_<char>` name → Delete). A Random/Shuffle container just
+plays its remaining members afterward — no other edit needed. (Watch out: if the
+folder you import from still has the dropped file on disk, Add Files will re-add
+it — delete it again.)
+
+Then **Generate** as in step 6 and confirm the bank's sound count equals your
+pick total; a wrong count means an orphan survived or a re-import didn't land.
+
 ## Optional polish
 The `RC_` containers inherit **Output Bus = Master Audio Bus**, which plays at
 full volume ignoring the in-game voice slider. If the lines come in too hot,

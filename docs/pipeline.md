@@ -137,23 +137,38 @@ Turn ranked candidates into your actual picks. Shares `downstream.py` helpers;
 needs ffmpeg, not the GPU.
 
 ### `sample`  *(CPU)*
-Cuts a padded preview per top-N candidate (N = `AUDITION_TOP_N`) from the 16 kHz
-WAV into `work/<project>/audition/`, and emits `audition.html` — a keep/reject
-board grouped by pool (players, localStorage, same pattern as the Stage 2 tagger).
+Cuts a generously padded preview (`PREVIEW_EDIT_PAD_S`) per top-N candidate
+(N = `AUDITION_TOP_N`) from the 16 kHz WAV into `work/<project>/audition/`, and
+emits `audition.html` — a keep/reject board grouped by pool (players,
+localStorage, same pattern as the Stage 2 tagger).
 
-### Keep (human)
-Serve `work/<project>/` over HTTP, open the board, play lines, **Keep** the ones
-you want. Export `picks.json`.
+### `serve`  *(CPU)*
+Serve `work/<project>/` over HTTP with a **Range-capable** handler, so the board's
+audio is seekable (the lead-in ▶ needs it). Use this — **not** `python -m
+http.server`, which ignores Range and silently breaks the seek.
+
+### Keep + tune (human)
+Serve the board with `04_audition serve` (**not** `python -m http.server` — the
+stdlib server ignores HTTP Range requests, which leaves audio non-seekable in the
+browser and silently breaks the lead-in ▶ seek). Open the board, play lines,
+**Keep** the ones you want. On a kept clip you can nudge its **lead-in / lead-out**
+(in−/in+,
+out−/out+, `NUDGE_STEP_S` per press; `▶` auditions just that window inside the
+padded preview). Positive widens, negative tightens — the fix for a clip that
+starts late or runs long, per clip, without disturbing the others. Export
+`picks.json` (carries `head_s`/`tail_s`).
 
 ### `import <picks.json>`
-Loads the kept `(pool, utterance)` pairs into the `picks` table.
+Loads the kept `(pool, utterance)` pairs — with their `head_s`/`tail_s` deltas
+(default 0) — into the `picks` table. Pre-tuning two-field files still load.
 
 ## Stage 5 — Clean (`05_clean.py`)  *(CPU)*
 
 For every pick, re-cut the span from the **original source** video
 (`episodes.path`) at full quality — **not** the 16 kHz ML WAV — then loudnorm to
 `LOUDNORM_LUFS`, optional `BANDPASS_HZ`, and head/tail fades (`FADE_MS`). Keeps
-the intentional `CLEAN_PAD_S` padding; does **not** silence-trim (that would
+the intentional `CLEAN_PAD_S` padding plus each pick's `head_s`/`tail_s` lead-in/
+lead-out delta from Stage 4; does **not** silence-trim (that would
 strip the padding and gut quiet clips). Outputs to `work/<project>/final/<pool>/`
 and records them in the `finals` table.
 
@@ -196,6 +211,7 @@ bank named in the descriptor is missing from `--banks`.
 - `pools`, `pool_events`, `pool_candidates` — pool definitions, their mapped
   game events, and ranked line matches.
 - `text_emb` — cached MiniLM text embeddings for utterances (Stage 3).
-- `picks` — kept `(pool, utterance)` pairs from the audition (Stage 4).
+- `picks` — kept `(pool, utterance)` pairs from the audition (Stage 4), each with
+  `head_s`/`tail_s` lead-in/lead-out deltas (seconds, default 0).
 - `finals` — cleaned final clips per pick, with output path (Stage 5).
 - `jobs` — per-episode, per-stage progress (the resumability backbone).

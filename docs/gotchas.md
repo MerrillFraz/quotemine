@@ -164,6 +164,24 @@ contain literal game callouts.
 
 ---
 
+## The audition board must be served Range-capable
+
+The Stage-4 board tunes each clip's in/out point by seeking a hidden `<audio>`
+element (`currentTime = winStart`). Browsers **refuse to seek** media whose server
+doesn't answer HTTP **Range** requests with `206 Partial Content` — `seekable`
+stays empty and every seek clamps to 0. Python's stdlib `http.server` ignores
+`Range` and returns `200` + the whole file, so the lead-**in** nudge *silently
+does nothing* while the lead-**out** (a pause, no seek) still works — which masks
+the cause completely. Serve with `pipeline/04_audition.py --project <name> serve`
+(a Range-capable handler), never `python -m http.server`.
+
+Related board-audio lesson: stop windowed playback with a `requestAnimationFrame`
+poll of `currentTime`, **not** the `timeupdate` event — `timeupdate` fires only
+~every 250 ms, so 0.05 s out-cut nudges appear to do nothing until they cross a
+tick, then drop a whole quarter-second, and the stop point jitters run-to-run.
+
+---
+
 ## Misc
 
 - **torchaudio's alignment model ignores `HF_HOME`** — it caches to

@@ -6,6 +6,48 @@ import json
 from types import SimpleNamespace
 
 import downstream
+import pytest
+
+
+# --- cut span bounds (pure pad math; ffmpeg itself validated by hand) --------
+
+def test_span_bounds_symmetric_pad():
+    # end 3.0, start 1.0, 0.1 pad both ends -> [0.9, 3.1], dur 2.2
+    ss, dur = downstream._span_bounds(1.0, 3.0, 0.1, 0.1)
+    assert ss == pytest.approx(0.9)
+    assert dur == pytest.approx(2.2)
+
+
+def test_span_bounds_asymmetric_lead_in_out():
+    # +0.2 lead-in, +0.3 lead-out on a [1.0, 3.0] line
+    ss, dur = downstream._span_bounds(1.0, 3.0, 0.30, 0.40)
+    assert ss == pytest.approx(0.70)          # 1.0 - 0.30
+    assert dur == pytest.approx(3.40 - 0.70)  # (3.0 + 0.40) - ss
+
+
+def test_span_bounds_negative_head_moves_in_point_later():
+    # a negative head delta tightens the front: in-point moves later, not earlier
+    ss, _ = downstream._span_bounds(1.00, 2.0, -0.20, 0.0)
+    assert ss == pytest.approx(1.20)          # 1.00 - (-0.20)
+
+
+def test_span_bounds_floors_at_zero_near_file_head():
+    # pad_head larger than start would go negative -> floored to 0
+    ss, _ = downstream._span_bounds(0.05, 2.0, 0.20, 0.0)
+    assert ss == 0.0
+
+
+def test_cut_span_empty_span_returns_false_without_ffmpeg(tmp_path, monkeypatch):
+    # an over-tightened per-clip delta can drive dur <= 0; cut_span must bail
+    # (return False) BEFORE invoking ffmpeg, so Stage 5 can skip it rather than
+    # feed clean_audio a file that was never written.
+    called = []
+    monkeypatch.setattr(downstream, "_ffmpeg", lambda args: called.append(args))
+    out = tmp_path / "x.wav"
+    ok = downstream.cut_span("src.mkv", 1.0, 1.2, out, pad_head=-0.5, pad_tail=-0.5)
+    assert ok is False
+    assert called == []            # never reached ffmpeg
+    assert not out.exists()
 
 
 # --- write_manifest ---------------------------------------------------------
@@ -47,6 +89,21 @@ def test_import_loads_picks_table(audition_mod, tmp_path):
 
     rows = db.execute("SELECT pool_id, utterance_id FROM picks ORDER BY utterance_id").fetchall()
     assert [(r["pool_id"], r["utterance_id"]) for r in rows] == [("greet", 1), ("greet", 2), ("bye", 3)]
+
+
+def test_import_carries_lead_in_out_deltas(audition_mod, tmp_path):
+    db = audition_mod.connect(tmp_path)
+    picks = [{"pool_id": "greet", "utterance_id": 1, "head_s": 0.1, "tail_s": 0.3},
+             {"pool_id": "bye", "utterance_id": 2}]        # pre-tuning row: no deltas
+    pf = tmp_path / "picks.json"
+    pf.write_text(json.dumps(picks))
+
+    audition_mod.cmd_import(SimpleNamespace(picksfile=str(pf)), db)
+
+    rows = {r["utterance_id"]: r for r in
+            db.execute("SELECT utterance_id, head_s, tail_s FROM picks")}
+    assert (rows[1]["head_s"], rows[1]["tail_s"]) == (0.1, 0.3)
+    assert (rows[2]["head_s"], rows[2]["tail_s"]) == (0.0, 0.0)  # defaults
 
 
 def test_import_is_idempotent_replace(audition_mod, tmp_path):

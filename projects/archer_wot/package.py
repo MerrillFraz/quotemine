@@ -38,7 +38,7 @@ from pathlib import Path
 BANK_NAME = "quotemine"                 # -> quotemine.bnk (name the SoundBank this in Wwise)
 MOD_EVENT_PREFIX = "vo_qm_"             # each pool's new Wwise event: vo_qm_<pool_id>
 MOD_ID = "com.merrillfraz.quotemine.archer"
-MOD_VERSION = "1.0.0"
+MOD_VERSION = "1.1.0"          # 1.1: retuned lead-in/out on ~60 lines, dropped 2
 MOD_NAME = "Quotemine — Archer Crew Voices"
 MOD_DESCRIPTION = (
     "Crew voiceover pack: lines from the animated series Archer, matched to "
