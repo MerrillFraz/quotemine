@@ -167,14 +167,29 @@ All downstream knobs are TUNING keys too. Re-run cost is cheap (ffmpeg, no GPU).
 Candidates per pool put on the audition board (`04_audition sample`). Raise to
 review deeper into the ranking, lower for a tighter board.
 
-### `PREVIEW_PAD_S` (default 0.15)
-Padding around audition preview clips (cut from the 16 kHz WAV). Purely for
-comfortable listening; doesn't affect finals.
+### `PREVIEW_EDIT_PAD_S` (default 1.0)
+Padding on audition preview clips (cut from the 16 kHz WAV). Deliberately
+generous: it's the headroom the board expands into when you nudge a clip's
+lead-in/lead-out, so you hear the adjusted window without re-cutting. Doesn't
+affect finals; the previewed **window** base is `CLEAN_PAD_S`, not this value.
+
+### `NUDGE_STEP_S` (default 0.05)
+How much one lead-in/lead-out button press moves a clip's boundary on the board.
+
+### Per-clip lead-in / lead-out (a human adjustment, not a re-run knob)
+On the audition board, a kept clip carries a signed **head** and **tail** delta
+(dialed with the in−/in+ and out−/out+ buttons, `▶` to audition just that
+window). They export in `picks.json` (`head_s`/`tail_s`) and land on the `picks`
+row, then Stage 5 adds them on top of `CLEAN_PAD_S`: positive widens (more
+lead-in / lead-out), negative tightens. This is how you fix a single clip that
+starts late or runs long **without** moving every other clip — unlike the global
+pads below. A clip left at 0/0 cuts exactly as before.
 
 ### `CLEAN_PAD_S` (default 0.10)
-Padding kept on the **final** cut from the original source. This head/tail is
-intentional — it keeps clips from sounding hard-clipped. Stage 5 does **not**
-silence-trim, so this padding survives.
+Padding kept on the **final** cut from the original source, and the base of the
+board's play-window. This head/tail is intentional — it keeps clips from
+sounding hard-clipped. Stage 5 does **not** silence-trim, so this padding
+survives. Per-clip head/tail deltas (above) stack on top of this per clip.
 
 ### `LOUDNORM_LUFS` (default -16.0)
 Integrated-loudness target for finals (ffmpeg `loudnorm`). Note: EBU R128

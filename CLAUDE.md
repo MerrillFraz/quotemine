@@ -17,7 +17,7 @@ Every stage takes `--project <name>` (default `archer_wot`), resolved against
 - `pipeline/01_index.py`  — demux, transcribe, diarize, index  [GPU]
 - `pipeline/02_identify.py` — tag → centroids → assign          [GPU + human]
 - `pipeline/03_match.py`  — keyword + semantic event matching   [GPU]
-- `pipeline/04_audition.py` — preview candidates → keep/reject → picks [human]
+- `pipeline/04_audition.py` — audition + per-clip lead-in/out tuning → picks [human]
 - `pipeline/05_clean.py`  — re-cut finals from source, loudnorm/fades [CPU]
 - `pipeline/06_package.py` — assemble clips + manifest (project hook)  [CPU]
 
@@ -58,3 +58,21 @@ manifest helpers). They need ffmpeg, not the GPU.
   the point, and aggressive trimming guts quieter clips. loudnorm + fades only.
 - Cut finals from the 16 kHz working WAV. Stage 5 re-cuts from the original
   source (`episodes.path`) for full quality; the 16 kHz WAV is ML-only.
+- Serve the audition board with `python -m http.server`. The stdlib server
+  ignores HTTP Range, so the browser can't seek and the board's lead-in ▶
+  silently does nothing (the lead-out still works, which hides it). Use
+  `pipeline/04_audition.py --project <name> serve` (Range-capable).
+
+## Backlog
+Forward-looking, not committed — distribution/UX polish, its own branch:
+- **Unified `quotemine` CLI + `pyproject.toml`** — console entry points so stages
+  run as `quotemine audition sample …` instead of `python pipeline/04_…`.
+  Source/editable install with documented torch-first setup; NOT a PyPI
+  `pip install` (the GPU/torch/pyannote deps won't resolve cleanly) and NOT a
+  frozen binary (wrong for a CUDA ML pipeline). Highest-leverage win.
+- **README quickstart** — six-stage end-to-end walkthrough that surfaces the top
+  gotchas up front (torch-first, pyannote token, MAX_SPEAKERS).
+- **`quotemine new <name>` scaffolder** — copy `projects/_template/` to start a
+  new corpus.
+- **Orchestration helper** (`quotemine run --project X`) — run the automated
+  stages in order, stopping with a clear prompt at the human audition step.
