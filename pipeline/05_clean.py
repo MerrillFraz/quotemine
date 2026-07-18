@@ -47,8 +47,8 @@ def main():
     db = connect(proj.workdir)
 
     picks = db.execute(
-        """SELECT pk.pool_id, pk.utterance_id, u.start_s, u.end_s,
-                  u.character, e.path AS src
+        """SELECT pk.pool_id, pk.utterance_id, pk.head_s, pk.tail_s,
+                  u.start_s, u.end_s, u.character, e.path AS src
            FROM picks pk
            JOIN utterances u ON u.id = pk.utterance_id
            JOIN episodes e   ON e.id = u.episode_id
@@ -69,8 +69,11 @@ def main():
         out = pool_dir / f"{r['utterance_id']}_{_slug(r['character'])}.wav"
         tmp = pool_dir / f".raw_{r['utterance_id']}.wav"
         try:
-            downstream.cut_from_source(r["src"], r["start_s"], r["end_s"], tmp,
-                                       pad=t["CLEAN_PAD_S"])
+            # per-clip lead-in/lead-out from Stage 4 rides on top of CLEAN_PAD_S
+            downstream.cut_from_source(
+                r["src"], r["start_s"], r["end_s"], tmp,
+                pad_head=t["CLEAN_PAD_S"] + (r["head_s"] or 0.0),
+                pad_tail=t["CLEAN_PAD_S"] + (r["tail_s"] or 0.0))
             downstream.clean_audio(tmp, out, lufs=t["LOUDNORM_LUFS"],
                                    bandpass_hz=t["BANDPASS_HZ"], fade_ms=t["FADE_MS"])
         finally:

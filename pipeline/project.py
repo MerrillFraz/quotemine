@@ -71,7 +71,9 @@ DEFAULT_TUNING = {
     "POOL_KW_BONUS": {},
     # Stage 4 — audition
     "AUDITION_TOP_N": 25,       # candidates per pool put on the board
-    "PREVIEW_PAD_S": 0.15,      # padding around preview clips
+    "PREVIEW_EDIT_PAD_S": 1.0,  # generous preview pad; headroom for lead-in/out
+                                # tuning on the board (window base is CLEAN_PAD_S)
+    "NUDGE_STEP_S": 0.05,       # one lead-in/lead-out nudge on the board
     # Stage 5 — clean
     "CLEAN_PAD_S": 0.10,        # padding kept on the final cut from source
     "LOUDNORM_LUFS": -16.0,     # integrated-loudness target
