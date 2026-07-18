@@ -1,0 +1,10 @@
+# Code owners for Quotemine.
+#
+# Every PR that touches these paths needs an approving review from an owner
+# listed here before it can merge (enforced by branch protection on `main` +
+# "Require review from Code Owners"). Anyone may open a PR from a fork; only a
+# code owner can approve it into `main`.
+#
+# Add designees by appending their @username on the relevant line.
+
+*       @MerrillFraz
