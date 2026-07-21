@@ -82,7 +82,8 @@ def main():
                 empty += 1
                 continue
             downstream.clean_audio(tmp, out, lufs=t["LOUDNORM_LUFS"],
-                                   bandpass_hz=t["BANDPASS_HZ"], fade_ms=t["FADE_MS"])
+                                   bandpass_hz=t["BANDPASS_HZ"], fade_ms=t["FADE_MS"],
+                                   compress=t.get("COMPRESS_VO", False))
         finally:
             if tmp.exists():
                 tmp.unlink()

@@ -65,18 +65,37 @@ def cut_from_source(src_video, start_s, end_s, out_wav, pad=0.0,
                     pad_head=pad_head, pad_tail=pad_tail)
 
 
-def clean_audio(in_wav, out_wav, lufs=-16.0, bandpass_hz=None, fade_ms=15, ar=48000):
-    """loudnorm + optional bandpass + symmetric fades, via one ffmpeg pass.
+def clean_audio(in_wav, out_wav, lufs=-16.0, bandpass_hz=None, fade_ms=15, ar=48000,
+                compress=False):
+    """loudnorm + optional bandpass/compression + symmetric fades, one ffmpeg pass.
 
     Deliberately does NOT silence-trim: the input is already tight (word-level
     boundaries) with intentional CLEAN_PAD_S head/tail for a natural sound, and
     aggressive trimming both removes that padding and can gut quieter clips.
+
+    compress=True adds a voice-over presence chain (rumble cut + compression,
+    tighter loudnorm) so clips stay audible and even in a loud game mix. It
+    raises quiet parts — the opposite of gutting them — so it stays within the
+    no-silence-trim rule.
     """
     chain = []
     if bandpass_hz:
         lo, hi = bandpass_hz
         chain.append(f"highpass=f={lo},lowpass=f={hi}")
-    chain.append(f"loudnorm=I={lufs}:TP=-1.5:LRA=11")
+    if compress:
+        # Maximize to game-VO loudness (measured against a shipping WoWs pack: RMS
+        # ~-10 dB, peaks slammed to ~0). speechnorm lifts the whole clip near full
+        # scale, firm compression raises RMS, brickwall limiter catches peaks.
+        # loudnorm is deliberately NOT used here: its integrated (LUFS) targeting
+        # misfires on the many sub-3s callouts (EBU gating needs ~3s), leaving them
+        # peak-shy and quiet. This slams every clip to ~0 dBFS like game voice.
+        # (`lufs`/LOUDNORM_LUFS applies only to the non-compress broadcast path.)
+        chain.append("highpass=f=85")
+        chain.append("speechnorm=p=0.95:e=12.5:l=1")
+        chain.append("acompressor=threshold=0.125:ratio=4:makeup=3")
+        chain.append("alimiter=limit=0.98")
+    else:
+        chain.append(f"loudnorm=I={lufs}:TP=-1.5:LRA=11")
     if fade_ms:
         f = fade_ms / 1000.0
         # fade both ends without needing total duration (reverse trick).
@@ -160,12 +179,19 @@ AUDITION_HTML = r"""<!doctype html>
   #hud{position:fixed;bottom:0;left:0;right:0;background:#0f1114;border-top:1px solid #262a31;padding:9px 22px;display:flex;gap:18px;align-items:center;flex-wrap:wrap}
   .cc{font-size:12px}.cc b{color:#e6e6e6}
   #exp{margin-left:auto;background:#2f6f3f;border:1px solid #3f8f52;color:#fff;padding:7px 15px;border-radius:3px;cursor:pointer;font:inherit}
+  #exp.hascf{background:#8a5a2f;border-color:#b0702f}
+  /* cross-pool clip reuse (soft-warn): the pack tries never to reuse a clip */
+  tr.conflict{background:#2a1717}
+  .warn{color:#e88a3f;font-size:11px}
+  .usedhint{color:#7a7460;font-size:11px}
+  .cfchip{color:#e88a3f;font-weight:bold}.uniqchip b{color:#7fd0ff}
 </style>
 <h1>AUDITION</h1>
 <div class="sub">One row per ranked candidate, grouped by pool (blue headers). Play a line and <b>Keep</b> the ones you want in the pack;
 leave the rest. A <span class="star">&#9733;</span> marks a keyword hit. On a kept line, nudge <b>lead-in</b> / <b>lead-out</b>
 (each &plusmn;__STEP__s per click; may go negative to tighten) and hit <b>&#9654;</b> to hear just that window — it exports with the pick
-and Stage 5 cuts to it. Export picks.json when done, then run <code>04_audition import</code>.</div>
+and Stage 5 cuts to it. Each clip should be used <b>once</b>: keeping the same line in two pools is flagged <span class="warn">&#9888; in orange</span>,
+and a line already used elsewhere shows a <span class="usedhint">grey note</span> before you keep it. Export picks.json when done, then run <code>04_audition import</code>.</div>
 <div id="ctl">
   <label><input type="checkbox" id="fKept"> kept only</label>
   <span id="count"></span>
@@ -192,6 +218,11 @@ const ROW=new Map(ROWS.map(r=>[r.pool_id+"|"+r.utterance_id,r]));
 // and export only current-board keeps so stale picks can't ride along.
 const ROWKEYS=new Set(ROW.keys());
 const liveKeys=()=>Object.keys(picks).filter(k=>ROWKEYS.has(k));
+// utterance_id -> [pool_id,...] across current keeps. A clip kept in >1 pool is a
+// reuse conflict — soft-warned (flagged, never blocked): the pack tries to use
+// each clip only once, and this is where you catch an accidental double-assign.
+const usage=()=>{const m={}; for(const k of liveKeys()){const i=k.indexOf("|");
+  const p=k.slice(0,i), uid=k.slice(i+1); (m[uid]=m[uid]||[]).push(p);} return m;};
 const save=()=>localStorage.setItem(KEY,JSON.stringify(picks));
 const fmt=x=>(x<0?"−":"+")+Math.abs(x).toFixed(2);
 
@@ -199,10 +230,16 @@ function render(){
   const tb=document.querySelector("#t tbody"); tb.innerHTML="";
   const keptOnly=document.getElementById("fKept").checked;
   let shown=0, last=null;
+  const use=usage();
   for(const r of ROWS){
     const key=r.pool_id+"|"+r.utterance_id;
     const o=off(key), on=o!=null;
     if(keptOnly && !on) continue;
+    const elsewhere=(use[r.utterance_id]||[]).filter(p=>p!==r.pool_id);
+    const conflict=on && elsewhere.length>0;
+    const flag=conflict
+      ? ` <span class="warn">&#9888; also kept in ${elsewhere.join(", ")}</span>`
+      : (elsewhere.length ? ` <span class="usedhint">&middot; clip already used in ${elsewhere.join(", ")}</span>` : "");
     if(r.pool_id!==last){
       last=r.pool_id;
       const hr=document.createElement("tr"); hr.className="poolhead";
@@ -210,14 +247,14 @@ function render(){
       tb.appendChild(hr);
     }
     shown++;
-    const tr=document.createElement("tr"); if(on) tr.className="kept";
+    const tr=document.createElement("tr"); tr.className=conflict?"kept conflict":(on?"kept":"");
     const star=r.kw?` <span class="star">&#9733;</span>`:"";
     const dis=on?"":" disabled";
     const roset=(on&&(o.h||o.t))?" set":"";
     const roTxt=on?`in ${fmt(o.h)} / out ${fmt(o.t)}`:"in +0.00 / out +0.00";
     tr.innerHTML=`<td><button class="k ${on?"on":""}" data-k="${key}">${on?"kept":"keep"}</button></td>`
       +`<td><audio controls preload="none" src="${r.preview}"></audio></td>`
-      +`<td class="txt">${(r.text||"").replace(/</g,"&lt;").slice(0,140)}<div class="who">${r.character} &middot; ${r.duration_s.toFixed(1)}s &middot; <span class="sc">sem ${r.sem.toFixed(2)}</span>${star}</div></td>`
+      +`<td class="txt">${(r.text||"").replace(/</g,"&lt;").slice(0,140)}<div class="who">${r.character} &middot; ${r.duration_s.toFixed(1)}s &middot; <span class="sc">sem ${r.sem.toFixed(2)}</span>${star}${flag}</div></td>`
       +`<td class="tune">`
         +`<button class="nb" data-k="${key}" data-e="h" data-d="-1"${dis}>in&minus;</button>`
         +`<button class="nb" data-k="${key}" data-e="h" data-d="1"${dis}>in+</button>`
@@ -232,13 +269,22 @@ function render(){
 }
 function hud(){
   const h=document.getElementById("hud"); h.innerHTML="";
+  const use=usage();
+  const uids=Object.keys(use), conflicts=uids.filter(u=>use[u].length>1);
+  const summary=document.createElement("div"); summary.className="cc uniqchip";
+  summary.innerHTML=`<b>${uids.length}</b> unique clips`
+    +(conflicts.length?` &middot; <span class="cfchip">&#9888; ${conflicts.length} reused</span>`:"");
+  h.appendChild(summary);
   const per={};
-  for(const k of liveKeys()){const p=k.split("|")[0]; per[p]=(per[p]||0)+1;}
+  for(const k of liveKeys()){const i=k.indexOf("|"); const p=k.slice(0,i); per[p]=(per[p]||0)+1;}
   const pools=[...new Set(ROWS.map(r=>r.pool_id))];
   for(const p of pools){const d=document.createElement("div"); d.className="cc"; d.innerHTML=`<b>${p}</b> ${per[p]||0}`; h.appendChild(d);}
-  const b=document.createElement("button"); b.id="exp"; b.textContent="Export picks.json";
+  const b=document.createElement("button"); b.id="exp";
+  b.textContent=conflicts.length?`Export picks.json (${conflicts.length} reused)`:"Export picks.json";
+  if(conflicts.length) b.classList.add("hascf");
   b.onclick=()=>{
-    const out=liveKeys().map(k=>{const [pool_id,uid]=k.split("|"); const o=off(k);
+    if(conflicts.length && !confirm(conflicts.length+" clip(s) are kept in more than one pool. Export anyway?")) return;
+    const out=liveKeys().map(k=>{const i=k.indexOf("|"); const pool_id=k.slice(0,i), uid=k.slice(i+1); const o=off(k);
       return {pool_id, utterance_id:Number(uid), head_s:o.h, tail_s:o.t};});
     const a=document.createElement("a");
     a.href=URL.createObjectURL(new Blob([JSON.stringify(out,null,2)],{type:"application/json"}));

@@ -14,6 +14,13 @@ A project config module must expose:
     CHARACTERS       -> list[str]               the roster (required, non-empty)
     POOLS            -> list[tuple]             event pools (see any config.py)
 
+A POOLS entry is (pool_id, display, suggested_char, keywords, description,
+[event_ids]) and MAY carry additional trailing elements. The engine treats
+anything past the sixth as opaque and passes it through untouched — only a
+project's own package.py hook interprets it (e.g. a state/routing filter that
+maps a pool to specific sub-states of a target event). Keeping the engine
+ignorant of it is deliberate: routing specifics belong in the project layer.
+
 and may optionally expose:
 
     label(group_idx, item_idx) -> str    human display; default "g<G>i<I>"
@@ -79,6 +86,11 @@ DEFAULT_TUNING = {
     "LOUDNORM_LUFS": -16.0,     # integrated-loudness target
     "BANDPASS_HZ": None,        # (low, high) to band-limit, or None
     "FADE_MS": 15,              # head/tail fade on finals
+    # Voice-over presence: rumble cut + compression before loudnorm so quiet
+    # syllables stay audible and levels are even clip-to-clip. Off by default
+    # (broadcast-style finals); turn on for in-game VO that must cut through a
+    # loud mix, usually paired with a hotter LOUDNORM_LUFS (e.g. -13).
+    "COMPRESS_VO": False,
 }
 
 # Any group_idx falls inside this when a project declares no bands.
