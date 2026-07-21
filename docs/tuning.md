@@ -90,6 +90,29 @@ don't have to match your target.
   our base" ranks far better than "base capture". Sharpen these using your
   target's own event descriptions if it has them.
 
+#### Segregating one event by state (optional 7th field)
+
+A pool tuple may carry a **7th element**: a state-routing filter, or `None`.
+The engine treats it as **opaque** (Stage 3 ignores it); only a project's
+`package.py` interprets it, to route a pool to a *subset* of a target event's
+states. This lets several pools share one event, each firing in a different
+context. WoWs, for instance, splits one torpedo-alarm event by bearing:
+
+```python
+("torpedo_left",  "...", "Lana", "left port", "...",
+ ["Play_VO_Ship_Alarms_Torpedo_Danger"], {"VO_Torpedo_Location": ["Torpedo_Left"]}),
+("torpedo_right", "...", "Lana", "right starboard", "...",
+ ["Play_VO_Ship_Alarms_Torpedo_Danger"], {"VO_Torpedo_Location": ["Torpedo_Right"]}),
+```
+
+`{state_var: [allowed_values]}` — a target state-path matches when every listed
+variable holds an allowed value. `None` (or a 6-tuple) fills the whole event with
+no segregation (the default). Because it's opaque to the engine, the state
+*names* live entirely in the project layer — the pipeline stays game-agnostic.
+See `projects/archer_wows/` for the worked example (65 pools; `package.py` does
+the path matching). Matching, auditioning, and the generic manifest all work
+unchanged whether a pool carries the field or not.
+
 #### Match the vibe, not the verb
 Your source splits pools into two kinds (see `gotchas.md`):
 - **Personality** pools (taunt, victory, confusion, annoyance) — the source
@@ -192,10 +215,23 @@ sounding hard-clipped. Stage 5 does **not** silence-trim, so this padding
 survives. Per-clip head/tail deltas (above) stack on top of this per clip.
 
 ### `LOUDNORM_LUFS` (default -16.0)
-Integrated-loudness target for finals (ffmpeg `loudnorm`). Note: EBU R128
-integrated measurement wants ≥3 s, so on sub-second callouts loudnorm runs in
-its single-pass dynamic mode — consistent enough for a pack, but don't expect
-a lab-exact match across very short clips.
+Integrated-loudness target for finals (ffmpeg `loudnorm`), used **only when
+`COMPRESS_VO` is off**. A −16 LUFS broadcast target suits a soundboard or web
+export. It is the **wrong target for in-game voice** — and worse, EBU R128
+integrated measurement is invalid below ~3 s, so on the short callouts a game
+pack is full of, `loudnorm` under-processes and leaves clips peak-shy and quiet
+(see `gotchas.md`). For a game target, ignore this knob and use `COMPRESS_VO`.
+
+### `COMPRESS_VO` (default False)
+Swaps the Stage-5 `loudnorm` for a **voice-over maximizer** — `highpass` →
+`speechnorm` → `acompressor` → `alimiter` — that slams every clip (short *or*
+long) to ~0 dBFS peak with high RMS, matching how game voice is mastered.
+- **On** for in-game VO that must cut through a loud mix (gunfire, engines).
+  Broadcast loudness is inaudible in a game; measured against a shipping pack,
+  game voice sits ~−10 dB RMS with peaks at 0.0 (see `gotchas.md`).
+- **Off** for broadcast/soundboard output, where `LOUDNORM_LUFS` governs instead.
+Re-run cost: cheap (ffmpeg re-cut of finals). Calibrate by decoding a known-good
+pack and matching its `volumedetect` numbers, not integrated LUFS.
 
 ### `BANDPASS_HZ` (default None)
 `(low, high)` to band-limit the final (e.g. `(300, 3400)` for a radio/telephone

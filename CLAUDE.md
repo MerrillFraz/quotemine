@@ -27,16 +27,25 @@ manifest helpers). They need ffmpeg, not the GPU.
 ## Project vs. engine (portability)
 - The stages are generic. Everything specific to a corpus — filename parsing,
   character roster, era-bands, event pools, and per-corpus tuning — lives in
-  `projects/<name>/config.py`. `projects/_template/` is the starting point;
-  `projects/archer_wot/` is the worked example (Archer → World of Tanks).
+  `projects/<name>/config.py`. `projects/_template/` is the starting point.
+  Two worked examples, the same Archer corpus to two very different targets:
+  `projects/archer_wot/` (→ World of Tanks, the simple case) and
+  `projects/archer_wows/` (→ World of Warships, the advanced case — 65
+  state-segregated pools, in-game VO loudness).
 - Provenance is neutral: `group_idx`/`item_idx` are orderable ints (a TV show
   maps them to season/episode; a film/game may leave them null). Nothing in
   `pipeline/` assumes television.
+- A POOLS entry may carry an **optional 7th field** — an opaque state-routing
+  filter the engine passes through untouched, for a project's `package.py` to
+  map one event onto several context-specific pools. Routing specifics (state
+  names) stay in the project layer; the engine never learns them.
 - **Projects may carry code, not just config.** An optional
   `projects/<name>/package.py` with a `package(ctx)` function overrides Stage 6's
-  generic packaging for a target-specific layout (see `archer_wot/package.py`,
-  which emits Wwise `RC_` containers). It composes `pipeline/downstream.py`
-  helpers rather than reinventing them.
+  generic packaging for a target-specific layout. `archer_wot/package.py` emits
+  Wwise `RC_` containers + a `.wotmod` event-remap (via `pipeline/build_wotmod.py`);
+  `archer_wows/package.py` clones a reference `mod.xml` and state-routes each pool
+  (via `pipeline/build_wowsmod.py`). Both compose `pipeline/downstream.py` helpers
+  rather than reinventing them.
 
 ## Conventions
 - Each project reads/writes one SQLite DB: `work/<project>/corpus.db`.
@@ -55,7 +64,11 @@ manifest helpers). They need ffmpeg, not the GPU.
 - Install whisperx before torch (pulls CPU wheel).
 - Build an auto-purity filter for short utterances (proven not to work).
 - Silence-trim final clips (Stage 5): the intentional CLEAN_PAD_S head/tail is
-  the point, and aggressive trimming guts quieter clips. loudnorm + fades only.
+  the point, and aggressive trimming guts quieter clips. Level (loudnorm, or the
+  `COMPRESS_VO` game-VO maximizer) + fades only — never silence-trim.
+- Master in-game voice to a broadcast target. Game voice is mastered hot (~0 dBFS
+  peaks); `-16 LUFS` is inaudible under the mix. Use `COMPRESS_VO` (see
+  gotchas/tuning) and measure short clips by RMS, not integrated LUFS.
 - Cut finals from the 16 kHz working WAV. Stage 5 re-cuts from the original
   source (`episodes.path`) for full quality; the 16 kHz WAV is ML-only.
 - Serve the audition board with `python -m http.server`. The stdlib server
