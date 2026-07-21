@@ -8,9 +8,14 @@ to your target (a game soundbank, a sampler, a JSON pack, etc.).
 
 If present, pipeline/06_package.py calls package(ctx) instead of its default.
 Compose the shared helpers in pipeline/downstream.py rather than reinventing
-clip handling. See projects/archer_wot/package.py for a worked example.
+clip handling. Two worked examples:
+  - projects/archer_wot/package.py   — WoT: event-remap descriptor + .wotmod
+  - projects/archer_wows/package.py  — WoWs: clones a reference mod.xml and
+        routes each pool to its event's states via the pool's optional 7th-field
+        filter (ctx["proj"].POOLS[i][6]); unmatched states are dropped.
 
 ctx keys:
+  proj         -> the resolved Project (proj.POOLS carries any 7th-field filters)
   package_dir  -> Path to write the deliverable into (you create/populate it)
   workdir      -> Path to work/<project>/ (clip files are relative to this)
   entries      -> [{pool_id, utterance_id, file, character, text, source}, ...]

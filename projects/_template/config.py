@@ -67,7 +67,11 @@ TUNING = {
     # "MIN_SNR_DB": 8.0,
     # Downstream (stages 4-6):
     # "AUDITION_TOP_N": 25,     # candidates per pool on the audition board
-    # "LOUDNORM_LUFS": -16.0,   # final loudness target
+    # "LOUDNORM_LUFS": -16.0,   # final loudness target (broadcast; used when
+    #                           # COMPRESS_VO is off)
+    # "COMPRESS_VO": True,      # in-game voice? maximize to ~0 dBFS like game
+    #                           # voice instead of loudnorm — see docs/tuning.md.
+    #                           # Broadcast -16 LUFS is inaudible in a game mix.
     # "BANDPASS_HZ": (300, 3400),  # e.g. telephone band, or None
 }
 
@@ -80,9 +84,23 @@ TUNING = {
 #                  where semantic-match quality lives.
 #   event_ids   -> the real target IDs this pool wires to (game soundbank event
 #                  strings, or any labels meaningful to your downstream).
+#
+# OPTIONAL 7th element: a state-routing filter {state_var: [values]} (or None).
+# The engine ignores it; only your package.py reads it, to fire a pool in a
+# subset of an event's states — so several pools can share one event in
+# different contexts. See projects/archer_wows/ for the worked example and
+# docs/tuning.md for the contract. A 6-tuple (or None) fills the whole event.
 POOLS = [
     ("example_event", "Example event", None,
      "example keywords here",
      "a natural-language description of what this event means",
      ["target_event_id_1", "target_event_id_2"]),
+
+    # State-segregated example: two pools sharing one event, split by a state.
+    # ("spot_battleship", "Spotted a battleship", None, "big huge",
+    #  "calling out a large, dangerous target", ["target_spot_event"],
+    #  {"target_type": ["battleship"]}),
+    # ("spot_destroyer", "Spotted a destroyer", None, "small fast",
+    #  "calling out a small, sneaky target", ["target_spot_event"],
+    #  {"target_type": ["destroyer"]}),
 ]
