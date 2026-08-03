@@ -8,6 +8,8 @@ No GPU, no models. ffmpeg on PATH is required (same as Stage 1 demux).
 """
 
 import json
+import math
+import re
 import subprocess
 from pathlib import Path
 
@@ -66,17 +68,26 @@ def cut_from_source(src_video, start_s, end_s, out_wav, pad=0.0,
 
 
 def clean_audio(in_wav, out_wav, lufs=-16.0, bandpass_hz=None, fade_ms=15, ar=48000,
-                compress=False):
-    """loudnorm + optional bandpass/compression + symmetric fades, one ffmpeg pass.
+                compress=False, speechnorm_e=12.5, makeup=3.0):
+    """Level + optional bandpass + symmetric fades, one ffmpeg pass.
 
     Deliberately does NOT silence-trim: the input is already tight (word-level
     boundaries) with intentional CLEAN_PAD_S head/tail for a natural sound, and
     aggressive trimming both removes that padding and can gut quieter clips.
 
-    compress=True adds a voice-over presence chain (rumble cut + compression,
-    tighter loudnorm) so clips stay audible and even in a loud game mix. It
-    raises quiet parts — the opposite of gutting them — so it stays within the
-    no-silence-trim rule.
+    Two mutually exclusive level paths:
+      compress=False  loudnorm to `lufs` (broadcast-style finals).
+      compress=True   a voice-over presence chain that REPLACES loudnorm
+                      entirely — `lufs` is not used at all on this path.
+                      Raises quiet parts, so it stays within the
+                      no-silence-trim rule.
+
+    The compress path has a FINITE gain ceiling: speechnorm contributes at most
+    20*log10(speechnorm_e) dB and the compressor's makeup another
+    20*log10(makeup), so a clip whose source peak sits below roughly
+    -(that total) cannot reach the ~0 dBFS game-VO target no matter what. It
+    fails quietly — the ffmpeg call still succeeds. Use `measure_level()` on the
+    output to catch it; Stage 5 does this automatically.
     """
     chain = []
     if bandpass_hz:
@@ -89,10 +100,10 @@ def clean_audio(in_wav, out_wav, lufs=-16.0, bandpass_hz=None, fade_ms=15, ar=48
         # loudnorm is deliberately NOT used here: its integrated (LUFS) targeting
         # misfires on the many sub-3s callouts (EBU gating needs ~3s), leaving them
         # peak-shy and quiet. This slams every clip to ~0 dBFS like game voice.
-        # (`lufs`/LOUDNORM_LUFS applies only to the non-compress broadcast path.)
+        # (`lufs`/LOUDNORM_LUFS is ignored entirely on this path.)
         chain.append("highpass=f=85")
-        chain.append("speechnorm=p=0.95:e=12.5:l=1")
-        chain.append("acompressor=threshold=0.125:ratio=4:makeup=3")
+        chain.append(f"speechnorm=p=0.95:e={speechnorm_e}:l=1")
+        chain.append(f"acompressor=threshold=0.125:ratio=4:makeup={makeup}")
         chain.append("alimiter=limit=0.98")
     else:
         chain.append(f"loudnorm=I={lufs}:TP=-1.5:LRA=11")
@@ -103,6 +114,31 @@ def clean_audio(in_wav, out_wav, lufs=-16.0, bandpass_hz=None, fade_ms=15, ar=48
     _ffmpeg(["-i", str(in_wav), "-af", ",".join(chain), "-ac", "1", "-ar", str(ar),
              "-c:a", "pcm_s16le", str(out_wav)])
     return Path(out_wav).exists()
+
+
+def compress_gain_ceiling_db(speechnorm_e=12.5, makeup=3.0):
+    """Maximum lift the COMPRESS_VO chain can apply, in dB. A source peak below
+    -(this) can't reach 0 dBFS. Pure; unit-tested."""
+    return 20.0 * math.log10(max(speechnorm_e, 1e-9)) + 20.0 * math.log10(max(makeup, 1e-9))
+
+
+_VOL_RE = re.compile(r"(max_volume|mean_volume):\s*(-?\d+(?:\.\d+)?) dB")
+
+
+def measure_level(wav):
+    """(max_volume_db, mean_volume_db) for a file, via ffmpeg volumedetect.
+
+    Closes the loop on the COMPRESS_VO chain, which is otherwise an open-loop
+    gain stage: it reports success whether the clip reached the target or landed
+    10 dB short. Returns (None, None) if ffmpeg/volumedetect gives us nothing.
+    """
+    proc = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-nostdin", "-i", str(wav),
+         "-af", "volumedetect", "-f", "null", "-"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    found = dict((m.group(1), float(m.group(2)))
+                 for m in _VOL_RE.finditer(proc.stderr))
+    return found.get("max_volume"), found.get("mean_volume")
 
 
 def write_manifest(entries, pools, pool_events, out_path):

@@ -230,8 +230,29 @@ long) to ~0 dBFS peak with high RMS, matching how game voice is mastered.
   Broadcast loudness is inaudible in a game; measured against a shipping pack,
   game voice sits ~−10 dB RMS with peaks at 0.0 (see `gotchas.md`).
 - **Off** for broadcast/soundboard output, where `LOUDNORM_LUFS` governs instead.
+
+It **replaces** `loudnorm` rather than running before it, so `LOUDNORM_LUFS` has
+no effect at all while this is on — don't retune it expecting a change.
+
 Re-run cost: cheap (ffmpeg re-cut of finals). Calibrate by decoding a known-good
 pack and matching its `volumedetect` numbers, not integrated LUFS.
+
+### `VO_SPEECHNORM_E` / `VO_MAKEUP` / `VO_PEAK_FLOOR_DBFS`
+The gain available to the `COMPRESS_VO` chain, and the floor for reporting when
+it wasn't enough.
+
+The chain has a **finite ceiling**: `speechnorm` contributes at most
+`20·log10(VO_SPEECHNORM_E)` dB and the compressor's makeup another
+`20·log10(VO_MAKEUP)` — about **21.9 + 9.5 = 31.4 dB** at the defaults. A clip
+whose source peaks below roughly −31 dBFS therefore *cannot* reach the ~0 dBFS
+target however hard the chain tries, and ffmpeg reports success either way.
+
+Stage 5 closes that loop: it measures every compressed clip with
+`volumedetect`, prints the median and worst peak, and names any clip peaking
+below `VO_PEAK_FLOOR_DBFS` (default −2.0). When that fires, the fix is usually
+per-clip — re-cut with more lead-in/lead-out so the chain has more signal to
+work with, or drop the line — before reaching for the gain knobs, which buy
+level at the cost of noise floor.
 
 ### `BANDPASS_HZ` (default None)
 `(low, high)` to band-limit the final (e.g. `(300, 3400)` for a radio/telephone

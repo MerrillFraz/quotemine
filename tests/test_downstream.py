@@ -127,3 +127,28 @@ def test_hook_present_for_archer_wot(package_mod):
 
 def test_hook_absent_returns_none(package_mod):
     assert package_mod.load_package_hook("does_not_exist_xyz") is None
+
+
+# --- COMPRESS_VO gain ceiling ------------------------------------------------
+# The chain is open-loop: ffmpeg reports success whether a clip reached ~0 dBFS
+# or landed 10 dB short. Knowing the ceiling is what makes the shortfall
+# explainable rather than mysterious.
+
+def test_compress_gain_ceiling_at_defaults():
+    # speechnorm e=12.5 -> ~21.9 dB, acompressor makeup=3 -> ~9.5 dB.
+    assert downstream.compress_gain_ceiling_db(12.5, 3.0) == pytest.approx(31.4, abs=0.1)
+
+
+def test_compress_gain_ceiling_rises_with_both_knobs():
+    base = downstream.compress_gain_ceiling_db(12.5, 3.0)
+    assert downstream.compress_gain_ceiling_db(25.0, 3.0) > base
+    assert downstream.compress_gain_ceiling_db(12.5, 6.0) > base
+
+
+def test_compress_gain_ceiling_unity_is_zero():
+    assert downstream.compress_gain_ceiling_db(1.0, 1.0) == pytest.approx(0.0)
+
+
+def test_compress_gain_ceiling_survives_zero():
+    # Guarded against log10(0) rather than raising mid-Stage-5.
+    assert downstream.compress_gain_ceiling_db(0, 0) < 0
