@@ -63,7 +63,7 @@ def cmd_sample(args, db):
     for p in proj.POOLS:
         pid = p[0]
         cands = db.execute(
-            """SELECT pc.utterance_id, pc.kw, pc.sem, u.start_s, u.end_s,
+            """SELECT pc.utterance_id, pc.kw, pc.ph, pc.sem, u.start_s, u.end_s,
                       u.duration_s, u.character, u.text, e.wav_path
                FROM pool_candidates pc
                JOIN utterances u ON u.id = pc.utterance_id
@@ -84,7 +84,8 @@ def cmd_sample(args, db):
                 "pool_id": pid, "display": meta[pid]["display"],
                 "utterance_id": c["utterance_id"], "character": c["character"],
                 "duration_s": c["duration_s"], "text": c["text"],
-                "kw": c["kw"], "sem": c["sem"], "preview": f"audition/{name}",
+                "kw": c["kw"], "ph": c["ph"] or 0, "sem": c["sem"],
+                "preview": f"audition/{name}",
                 "clip_head": min(edit_pad, c["start_s"]),
             })
             total += 1
