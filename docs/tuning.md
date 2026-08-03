@@ -180,6 +180,58 @@ Pair it with a **tight, distinctive** keyword list (a floated bonus surfaces
 cost: instant (embeddings cached) — but remember to run `events` before `match`
 whenever you change a pool's keywords.
 
+### `POOL_FILTERS` (default `{}`) — character restriction + catchphrases
+`{pool_id: {...}}`, with a reserved `"*"` key that every pool's own entry merges
+**over**. Two sub-keys, both optional:
+
+```python
+"POOL_FILTERS": {
+    "*":              {"chars": ["Archer"]},              # every pool
+    "battle_start":   {"phrases": ["danger zone", "rampage"]},
+    "you_penetrated": {"phrases": ["just the tip", "phrasing"]},
+}
+```
+
+**`chars`** hard-restricts a pool's candidates to those `utterances.character`
+values. This is what makes a **single-character pack** possible — it's applied
+*before* the `TOP_SEMANTIC` cut, which matters: rank first and a lead character
+with 42% of all lines crowds everyone else out of the top 60.
+
+Note this is **not** `suggested_char` (POOLS field 3), which remains a display
+hint and is never a filter.
+
+**`phrases`** are literal multi-word catchphrases, matched as FTS5 *phrase*
+queries — the words in order and adjacent. Plain `keywords` can't express this:
+it whitespace-splits, so `"danger zone"` degrades to `"danger" OR "zone"`.
+Phrase hits are unioned into the candidate set like keyword hits, so
+`TOP_SEMANTIC` can never truncate them away.
+
+Build the list with `pipeline/phrases.py` rather than by hand — see
+`docs/pipeline.md`. A phrase with no transcript hits is just a dead search key.
+
+Re-run cost: `match` only (instant, embeddings cached) unless `PHRASE_WINDOW`
+widens past what's already embedded, which costs one GPU pass.
+
+### `PHRASE_BONUS` (default 0.6)
+Score bonus for a phrase hit, replacing the keyword bonus when a line is both.
+Sized like a large `POOL_KW_BONUS` and for the same reason: it floats
+catchphrases to the top of their pool on the board. Lower it if catchphrases are
+burying better-matched ordinary lines.
+
+### `PHRASE_WINDOW` (default `(0.4, 8.0)`) — phrase hits only
+Duration window for the phrase pass, replacing the pool's own window. Much wider
+on purpose. Catchphrases are routinely buried mid-utterance —
+
+> "O-N. Nothing. Well, just keep at it. **You're not my supervisor.**"
+
+— and the terse `CAND_MAX_S` of 2.2 s discards most of them: measured on the
+Archer corpus it loses 53–78 % of catchphrase hits (`shitsnacks` 2 of 9 survive,
+`sploosh` 6 of 16). Let the long lines through and trim them by hand with the
+board's lead-in/lead-out nudging, which is exactly what that control is for.
+
+The window is folded into the embedding window automatically when any pool uses
+phrases, so a long phrase hit still gets a real semantic score.
+
 ---
 
 ## Stages 4–6 — Downstream

@@ -24,6 +24,18 @@ Every stage takes `--project <name>` (default `archer_wot`), resolved against
 Stages 4–6 share `pipeline/downstream.py` (clip cutting, cleaning, board,
 manifest helpers). They need ffmpeg, not the GPU.
 
+## Variant packs over an already-mined corpus (no GPU)
+- `pipeline/fork_corpus.py --from A --to B` — copy `corpus.db`, clear only the
+  project layer (`pools`, `pool_events`, `pool_candidates`, `picks`, `finals`).
+  Keeps transcripts, human tagging, and the `text_emb` cache. Audio is *shared*
+  (absolute `episodes.wav_path`), so a fork is ~80 MB, not ~6 GB — and it
+  depends on its parent's `work/` for Stage 4 previews.
+- `pipeline/phrases.py scrape|mine|probe` — build catchphrase lists from an
+  episode wiki's "Running Gags" sections. Always `probe` before shipping a list:
+  fan lists are a hypothesis, the transcript DB is the evidence.
+- `projects/archer_wot_sterling/` — worked example: same corpus, same 17 WoT
+  events as `archer_wot`, restricted to one character via `POOL_FILTERS`.
+
 ## Project vs. engine (portability)
 - The stages are generic. Everything specific to a corpus — filename parsing,
   character roster, era-bands, event pools, and per-corpus tuning — lives in
@@ -46,6 +58,14 @@ manifest helpers). They need ffmpeg, not the GPU.
   `archer_wows/package.py` clones a reference `mod.xml` and state-routes each pool
   (via `pipeline/build_wowsmod.py`). Both compose `pipeline/downstream.py` helpers
   rather than reinventing them.
+- **Shared target layout lives in the engine, identity lives in the project.**
+  `pipeline/build_wotpack.py` holds the whole WoT emitter; a project's
+  `package.py` is an `Identity` (mod id, bank name, display name) plus a
+  `build()` call. Adding a WoT pack should never mean copying that emitter.
+- **A project may restrict candidates by character** via the `POOL_FILTERS`
+  tuning knob (`{"*": {"chars": [...]}, "<pool>": {"phrases": [...]}}`). Note
+  `suggested_char` (POOLS field 3) is display metadata and is *never* a filter —
+  that contract is unchanged and `archer_wows` depends on it.
 
 ## Conventions
 - Each project reads/writes one SQLite DB: `work/<project>/corpus.db`.

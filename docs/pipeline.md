@@ -237,6 +237,81 @@ The generic engine is identical for both — only `config.py` (pools, optional
 state filters) and `package.py` (the deliverable layout) differ. That's the
 portability claim, demonstrated twice.
 
+---
+
+## Variant packs over one corpus (`fork_corpus.py`, `phrases.py`)
+
+Stages 1–2 produce something entirely project-agnostic: a speaker-attributed
+line database. Stages 3–6 — which pools exist, what got picked, how it's
+packaged — are the project-specific half, and they're cheap. So a *second*
+project over the same corpus needs **no GPU at all**.
+
+The worked example is `archer_wot_sterling`: the same Archer corpus and the same
+17 WoT events as `archer_wot`, but every pool restricted to one character and
+seeded with his catchphrases.
+
+### `fork_corpus.py`  *(CPU, seconds)*
+
+```
+python pipeline/fork_corpus.py --from archer_wot --to archer_wot_sterling
+```
+
+Copies `corpus.db` and clears **only** the project layer (`pools`,
+`pool_events`, `pool_candidates`, `picks`, `finals`), keeping the transcripts,
+the human character tagging, and the `text_emb` cache — which is keyed by
+`utterance_id` alone and therefore valid for any pool set.
+
+Two things worth knowing:
+
+- **Audio is shared, not copied.** `episodes.wav_path` is absolute and keeps
+  pointing at the parent's `wav/`. A fork is ~80 MB against ~6 GB for a full
+  workdir — but it *depends* on its parent, so deleting the parent's `work/`
+  breaks every fork's Stage 4 previews. (Stage 5 re-cuts from `episodes.path`,
+  the original video, so finals are unaffected.)
+- **Clearing `pools` is load-bearing.** `03_match` only loads POOLS when that
+  table is empty, so a fork that kept it would silently reuse its parent's pools
+  forever.
+
+### `phrases.py`  *(CPU + network)*
+
+Builds the catchphrase lists that `POOL_FILTERS` consumes. Episode wikis carry a
+per-episode "Running Gags / Callbacks" section that is, structurally, a
+speaker-attributed catchphrase index — this turns it into config.
+
+```
+python pipeline/phrases.py --project archer_wot scrape          # cache wikitext
+python pipeline/phrases.py --project archer_wot mine            # rank by canon
+python pipeline/phrases.py --project archer_wot probe --character Archer
+```
+
+- **`scrape`** walks a wiki category through `api.php` (~4 requests for 137
+  pages) and caches the raw wikitext to `projects/_data/`. Use the API, not a
+  page fetcher: Fandom answers **HTTP 402** to generic fetchers.
+- **`mine`** aggregates the gag bullets into `{phrase: {character: episodes}}`.
+  The episode count is the **fan-canonicity signal** — "phrasing" is cited by 19
+  episodes, "danger zone" 8, against a long tail cited once.
+- **`probe`** is the reality check, and the step that makes the rest safe. It
+  scores every candidate against the actual corpus and applies a stoplist. Two
+  independent failure modes it exists to catch:
+  - *Generic filler.* "shut up" (206 corpus hits), "hang on" (97) and "hello"
+    (53) all scrape as legitimate running gags. At `PHRASE_BONUS` they would
+    swamp every pool. `projects/_data/phrase_stoplist.txt` holds them.
+  - *Wrong speaker.* Wiki attributions are often the person being spoken *to*,
+    and raw corpus counts are worse — Archer has 42 % of all lines, so counting
+    alone credits him with "get some", "idiot", "burn" and "chet". `probe`
+    attributes by **rate** (hits ÷ that character's share of the corpus), which
+    recovers Pam, Malory, Cheryl and Cyril respectively.
+
+Fan lists are a hypothesis; the transcript database is the evidence. Expect
+roughly a quarter of scraped gags to survive.
+
+### Then the normal downstream stages
+
+Stages 3–6 run unchanged. `_print_counts` warns loudly about any pool that ends
+up with **no** candidates — for a single-character pack that means the game
+falls back to its stock line for that event, which is a decision to make
+deliberately, not discover in-game.
+
 ## Schema (the important tables)
 
 - `episodes` — one row per source file; `group_idx`/`item_idx` (ordered
