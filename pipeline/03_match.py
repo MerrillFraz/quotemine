@@ -21,6 +21,7 @@ costs nothing.
 
 import argparse
 import json
+import re
 import sqlite3
 import sys
 from pathlib import Path
@@ -49,9 +50,15 @@ def connect(workdir):
             utterance_id INTEGER PRIMARY KEY, vector BLOB);
         CREATE TABLE IF NOT EXISTS pool_candidates (
             pool_id TEXT, utterance_id INTEGER, kw INTEGER,
-            sem REAL, score REAL,
+            sem REAL, score REAL, ph INTEGER DEFAULT 0,
             PRIMARY KEY (pool_id, utterance_id));
     """)
+    # `ph` (catchphrase hit) postdates the original table; add it in place so a
+    # DB built before phrase matching keeps working. Same pattern as the picks
+    # head_s/tail_s migration in 04_audition.py.
+    cols = {r["name"] for r in db.execute("PRAGMA table_info(pool_candidates)")}
+    if "ph" not in cols:
+        db.execute("ALTER TABLE pool_candidates ADD COLUMN ph INTEGER DEFAULT 0")
     return db
 
 
@@ -148,24 +155,51 @@ def load_text_matrix(db, ids):
 # match
 # ---------------------------------------------------------------------------
 
-def embedding_window(cand_min_s, cand_max_s, pool_windows):
-    """The union of the global candidate window and every per-pool override —
-    the duration range to embed once so a pool with a wider window has its
-    longer lines available. Pure; unit-tested."""
-    return (min([cand_min_s] + [w[0] for w in pool_windows.values()]),
-            max([cand_max_s] + [w[1] for w in pool_windows.values()]))
+def embedding_window(cand_min_s, cand_max_s, pool_windows, extra=()):
+    """The union of the global candidate window, every per-pool override, and
+    any `extra` windows (e.g. PHRASE_WINDOW when a pool uses phrases) — the
+    duration range to embed once so a pool with a wider window has its longer
+    lines available. Pure; unit-tested."""
+    ws = list(pool_windows.values()) + list(extra)
+    return (min([cand_min_s] + [w[0] for w in ws]),
+            max([cand_max_s] + [w[1] for w in ws]))
 
 
-def window_positions(ids, durs, pmin, pmax):
+def window_positions(ids, durs, pmin, pmax, chars=None, char_of=None):
     """Indices into `ids` whose utterance duration falls in [pmin, pmax], used
-    to restrict the ranked set to one pool's window. Pure; unit-tested."""
-    return [k for k, uid in enumerate(ids) if pmin <= durs[uid] <= pmax]
+    to restrict the ranked set to one pool's window. When `chars` is given the
+    set is also restricted to those characters — this happens HERE, before the
+    TOP_SEMANTIC cut, so a thin character isn't crowded out of the ranking by a
+    dominant one. Pure; unit-tested."""
+    keep = chars and set(chars)
+    return [k for k, uid in enumerate(ids)
+            if pmin <= durs[uid] <= pmax
+            and (not keep or (char_of or {}).get(uid) in keep)]
 
 
-def combined_score(sem, is_kw, bonus):
-    """A candidate's board-ranking score: semantic similarity plus the (possibly
-    per-pool) keyword bonus when it's a keyword hit. A large per-pool bonus floats
-    terse keyword gold above higher-semantic non-keyword lines. Pure; unit-tested."""
+def fts_phrase_query(phrases):
+    """FTS5 MATCH expression OR-ing each phrase as a *phrase* query: the words
+    must appear in order and adjacent. This is what plain `keywords` can't do —
+    it whitespace-splits, so "danger zone" degrades to "danger" OR "zone".
+    Returns "" when there's nothing to match (an empty MATCH is a syntax
+    error). Pure; unit-tested."""
+    out = []
+    for p in phrases or ():
+        # Strip the FTS5 quoting character and any leftover punctuation; the
+        # tokenizer discards it anyway, and it would otherwise break the query.
+        cleaned = re.sub(r"\s+", " ", re.sub(r"[^0-9A-Za-z' ]+", " ", str(p))).strip()
+        if cleaned:
+            out.append('"' + cleaned + '"')
+    return " OR ".join(out)
+
+
+def combined_score(sem, is_kw, bonus, is_phrase=False, phrase_bonus=0.0):
+    """A candidate's board-ranking score: semantic similarity plus a bonus when
+    it's a literal hit. A large bonus floats terse literal gold above
+    higher-semantic lines. A catchphrase hit takes PHRASE_BONUS and outranks the
+    keyword bonus when a line is both. Pure; unit-tested."""
+    if is_phrase:
+        return sem + phrase_bonus
     return sem + (bonus if is_kw else 0.0)
 
 
@@ -180,12 +214,25 @@ def cmd_match(args, db):
     # Per-pool keyword bonus: float literal hits for pools where the words are
     # the signal (terse trash-talk). Pools not listed use the global KW_BONUS.
     pool_kw_bonus = t.get("POOL_KW_BONUS", {}) or {}
+    # Per-pool candidate filters: a hard character restriction and/or literal
+    # catchphrases. Resolved through Project.pool_filter so the "*" project-wide
+    # default is merged in. Empty for every existing project — the paths below
+    # are no-ops unless a config opts in. See docs/tuning.md.
+    phrase_bonus = t.get("PHRASE_BONUS", 0.0)
+    phrase_window = tuple(t.get("PHRASE_WINDOW") or (cand_min_s, cand_max_s))
     if not db.execute("SELECT 1 FROM pools LIMIT 1").fetchone():
         load_pools(db, args.proj.POOLS)
 
+    pools = db.execute("SELECT * FROM pools").fetchall()
+    filters = {p["pool_id"]: args.proj.pool_filter(p["pool_id"]) for p in pools}
+    uses_phrases = any(f.get("phrases") for f in filters.values())
+
     # Embed the UNION of every window in use, so a pool with a wider window has
     # its longer lines available; each pool then filters M to its own window.
-    emb_min, emb_max = embedding_window(cand_min_s, cand_max_s, pool_windows)
+    # Phrase hits use their own, wider window, so fold it in when in play —
+    # otherwise a buried catchphrase would land with no embedding and score 0.
+    emb_min, emb_max = embedding_window(cand_min_s, cand_max_s, pool_windows,
+                                        extra=[phrase_window] if uses_phrases else [])
 
     embed = make_text_embedder()
     cand_ids = ensure_text_embeddings(db, embed, emb_min, emb_max)
@@ -195,15 +242,20 @@ def cmd_match(args, db):
     id_pos = {uid: k for k, uid in enumerate(ids)}
     durs = {r["id"]: r["duration_s"]
             for r in db.execute("SELECT id, duration_s FROM utterances")}
+    char_of = {r["id"]: r["character"]
+               for r in db.execute("SELECT id, character FROM utterances")}
 
-    pools = db.execute("SELECT * FROM pools").fetchall()
     pool_vecs = embed([p["description"] for p in pools])
 
     db.execute("DELETE FROM pool_candidates")
     for p, pv in zip(pools, pool_vecs):
-        pmin, pmax = pool_windows.get(p["pool_id"], (cand_min_s, cand_max_s))
-        # Restrict the ranked set to this pool's duration window.
-        win_pos = window_positions(ids, durs, pmin, pmax)
+        pid = p["pool_id"]
+        pmin, pmax = pool_windows.get(pid, (cand_min_s, cand_max_s))
+        chars = filters[pid].get("chars")
+        # Restrict the ranked set to this pool's duration window, and to its
+        # allowed characters BEFORE the top-N cut (filtering after would let a
+        # dominant character crowd a thin one out of the ranking entirely).
+        win_pos = window_positions(ids, durs, pmin, pmax, chars, char_of)
         if win_pos:
             sims = M[win_pos] @ pv
             order = np.argsort(-sims)[:top_semantic]
@@ -211,41 +263,77 @@ def cmd_match(args, db):
         else:
             cand = {}
 
+        # Character restriction for the literal passes below. Inlined rather
+        # than parameterised because sqlite3 has no list binding.
+        char_sql, char_args = "", []
+        if chars:
+            char_sql = " AND u.character IN (%s)" % ",".join("?" * len(chars))
+            char_args = list(chars)
+
+        def literal_hits(match_expr, lo, hi):
+            """Utterance ids matching an FTS5 expression inside [lo, hi]."""
+            return {r["id"] for r in db.execute(
+                "SELECT u.id FROM utterances u "
+                "WHERE u.character IS NOT NULL AND u.duration_s BETWEEN ? AND ?"
+                + char_sql +
+                " AND u.id IN (SELECT rowid FROM utterances_fts "
+                "WHERE utterances_fts MATCH ?)",
+                [lo, hi] + char_args + [match_expr])}
+
         kw_ids = set()
         # A pool may legitimately carry no keywords — e.g. a mechanical event
         # with no literal dialogue, matched on the semantic "vibe" alone. An
         # empty FTS5 MATCH is a syntax error, so skip the keyword pass entirely.
         terms = " OR ".join(f'"{w}"' for w in p["keywords"].split())
         if terms:
-            for r in db.execute(
-                "SELECT u.id FROM utterances u "
-                "WHERE u.character IS NOT NULL AND u.duration_s BETWEEN ? AND ? "
-                "AND u.id IN (SELECT rowid FROM utterances_fts WHERE utterances_fts MATCH ?)",
-                (pmin, pmax, terms)):
-                kw_ids.add(r["id"])
+            kw_ids = literal_hits(terms, pmin, pmax)
 
-        bonus = pool_kw_bonus.get(p["pool_id"], kw_bonus)
+        # Catchphrase pass. Runs over PHRASE_WINDOW rather than the pool's own
+        # window: catchphrases are routinely buried in longer lines, and the
+        # terse pool window would discard most of them. The board's
+        # lead-in/lead-out nudging trims them back down by hand.
+        ph_ids = set()
+        phrase_expr = fts_phrase_query(filters[pid].get("phrases"))
+        if phrase_expr:
+            ph_ids = literal_hits(phrase_expr, *phrase_window)
+
+        bonus = pool_kw_bonus.get(pid, kw_bonus)
         rows = []
-        for uid in (set(cand) | kw_ids):
+        # Literal hits are unioned in rather than ranked, so they can never be
+        # truncated away by the TOP_SEMANTIC cut.
+        for uid in (set(cand) | kw_ids | ph_ids):
             sem = cand.get(uid)
             if sem is None and uid in id_pos:
                 sem = float(M[id_pos[uid]] @ pv)
             sem = sem if sem is not None else 0.0
             kw = 1 if uid in kw_ids else 0
-            rows.append((p["pool_id"], uid, kw, sem, combined_score(sem, kw, bonus)))
-        db.executemany("INSERT OR REPLACE INTO pool_candidates VALUES (?,?,?,?,?)", rows)
+            ph = 1 if uid in ph_ids else 0
+            rows.append((pid, uid, kw, sem,
+                         combined_score(sem, kw, bonus, ph, phrase_bonus), ph))
+        db.executemany(
+            "INSERT OR REPLACE INTO pool_candidates "
+            "(pool_id, utterance_id, kw, sem, score, ph) VALUES (?,?,?,?,?,?)", rows)
     db.commit()
     print("\n[match] done.")
     _print_counts(db)
 
 
 def _print_counts(db):
-    print(f"\n{'pool_id':<16}{'cands':>6}{'kw':>5}{'sem':>5}")
+    print(f"\n{'pool_id':<16}{'cands':>6}{'kw':>5}{'ph':>5}{'sem':>5}")
+    empty = []
     for p in db.execute("SELECT * FROM pools"):
-        c = db.execute("SELECT COUNT(*) n, SUM(kw) k FROM pool_candidates WHERE pool_id=?",
-                       (p["pool_id"],)).fetchone()
-        n, k = c["n"] or 0, c["k"] or 0
-        print(f"{p['pool_id']:<16}{n:>6}{k:>5}{n-k:>5}")
+        c = db.execute(
+            "SELECT COUNT(*) n, SUM(kw) k, SUM(ph) p FROM pool_candidates "
+            "WHERE pool_id=?", (p["pool_id"],)).fetchone()
+        n, k, ph = c["n"] or 0, c["k"] or 0, c["p"] or 0
+        print(f"{p['pool_id']:<16}{n:>6}{k:>5}{ph:>5}{n-k:>5}")
+        if not n:
+            empty.append(p["pool_id"])
+    # An empty pool silently ships as stock game audio, so say so loudly. It's
+    # the usual symptom of a character filter with nothing behind it.
+    if empty:
+        print(f"\n[match] WARNING: {len(empty)} pool(s) with no candidates: "
+              + ", ".join(empty))
 
 
 def cmd_list(args, db):
