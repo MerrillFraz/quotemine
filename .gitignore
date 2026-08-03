@@ -27,3 +27,7 @@ CLAUDE.local.md
 
 # Local, machine-specific VS Code workspace (hard-codes a /mnt/c path)
 *.code-workspace
+
+# Scraped wiki caches (regenerate: pipeline/phrases.py scrape).
+# Third-party CC BY-SA prose — not vendored into the repo.
+projects/_data/*_wiki.json

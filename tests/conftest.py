@@ -58,3 +58,8 @@ def wows_pkg_mod():
 @pytest.fixture(scope="session")
 def wowsmod_mod():
     return _load("pipeline/build_wowsmod.py", "build_wowsmod")
+
+
+@pytest.fixture(scope="session")
+def phrases_mod():
+    return _load("pipeline/phrases.py", "phrases_tool")
