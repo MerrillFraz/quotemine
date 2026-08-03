@@ -47,3 +47,14 @@ def audition_mod():
 @pytest.fixture(scope="session")
 def package_mod():
     return _load("pipeline/06_package.py", "package_stage")
+
+
+@pytest.fixture(scope="session")
+def wows_pkg_mod():
+    """projects/archer_wows/package.py — the state-routing hook."""
+    return _load("projects/archer_wows/package.py", "wows_package")
+
+
+@pytest.fixture(scope="session")
+def wowsmod_mod():
+    return _load("pipeline/build_wowsmod.py", "build_wowsmod")

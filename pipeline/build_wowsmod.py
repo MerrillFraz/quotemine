@@ -59,7 +59,10 @@ def _wems_in_manifest(mod_xml):
 
 def main():
     ap = argparse.ArgumentParser(description="Assemble a zipped WoWs voice mod from package + encoded .wem files.")
-    ap.add_argument("--project", default="archer_wot")
+    # archer_wows, not the repo-wide archer_wot default: this builder is
+    # WoWs-only, and pointing it at a WoT workdir fails with a misleading
+    # "run Stage 6 first" instead of "wrong project".
+    ap.add_argument("--project", default="archer_wows")
     ap.add_argument("--workdir", default=None, help="Override (default: work/<project>/).")
     ap.add_argument("--wems", required=True,
                     help="Folder with the Wwise-encoded .wem files.")

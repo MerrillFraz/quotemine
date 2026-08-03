@@ -69,13 +69,38 @@ def _path_matches(path, filt):
     return all(states.get(var) in allowed for var, allowed in filt.items())
 
 
+def _reference_event_names():
+    """Every <ExternalEvent> name the reference schema knows about."""
+    ref_am = ET.parse(REFERENCE_MOD_XML).getroot().find("AudioModification")
+    return {ev.findtext("Name", "").strip() for ev in ref_am.findall("ExternalEvent")}
+
+
+def _why_stranded(pool_id, pool_events, known_events):
+    """Best explanation for a pool whose clips reached no <Path>. Pure;
+    unit-tested. The three causes need different fixes, so name which one."""
+    evs = pool_events.get(pool_id) or []
+    if not evs:
+        return "no game_event wired in POOLS"
+    missing = [e for e in evs if e not in known_events]
+    if missing:
+        return "game_event not in the reference schema: " + ", ".join(sorted(missing))
+    return "state filter matched no <Path> of " + ", ".join(evs)
+
+
 def _build_mod_xml(event_routes, out_path):
     """Clone the reference skeleton; for each covered event keep only the <Path>
     blocks some route matches, filling each with that route's clips. Paths no
     route matches are dropped, so the game falls back to its default voice there.
 
     event_routes: {game_event: [(pool_id, state_filter, [wem_basename, ...]), ...]}
-    Returns (events_written, filelist_slots_filled).
+    Returns (events_written, filelist_slots_filled, routed_pool_ids).
+
+    Routes are tried MOST SPECIFIC FIRST (by number of constrained state
+    variables), not in the order they were built. Route order otherwise comes
+    from Stage 6's row order, so an unfiltered pool — which matches every path —
+    would claim a whole event purely because one of its clips happened to be
+    inserted first. `_template/config.py` advertises exactly that blanket-pool
+    pattern next to the state-split one, so the collision is reachable.
     """
     ref_am = ET.parse(REFERENCE_MOD_XML).getroot().find("AudioModification")
 
@@ -85,28 +110,33 @@ def _build_mod_xml(event_routes, out_path):
 
     slots = 0
     written = 0
+    routed = set()
     for ev in ref_am.findall("ExternalEvent"):
         name = ev.findtext("Name", "").strip()
         routes = event_routes.get(name)
         if not routes:
             continue  # event not covered by any pool that produced clips
+        # Specific beats blanket; ties keep their original relative order.
+        routes = sorted(routes, key=lambda r: -len(r[1] or {}))
         container = ev.find("Container")
         kept = 0
         for path in container.findall("Path"):   # snapshot list — safe to remove
             fl = path.find("FilesList")
             match = None
             if fl is not None:
-                match = next((wems for (_pid, filt, wems) in routes
+                match = next(((pid, wems) for (pid, filt, wems) in routes
                               if _path_matches(path, filt)), None)
             if not match:
                 container.remove(path)   # unmatched -> omit -> in-game default voice
                 continue
+            pid, wems = match
             for child in list(fl):
                 fl.remove(child)
             fl.text = None
-            for w in match:
+            for w in wems:
                 f = ET.SubElement(fl, "File")
                 ET.SubElement(f, "Name").text = w
+            routed.add(pid)
             slots += 1
             kept += 1
         if kept:
@@ -115,13 +145,16 @@ def _build_mod_xml(event_routes, out_path):
 
     ET.indent(root, space="  ")
     ET.ElementTree(root).write(out_path, encoding="utf-8", xml_declaration=True)
-    return written, slots
+    return written, slots, routed
 
 
 def _write_convert_txt(clip_count, out_path):
+    # NOTE the parenthesised "=" * 54: adjacent string literals concatenate at
+    # parse time and bind TIGHTER than *, so writing `"title\n" "=" * 54` makes
+    # ("title\n=") * 54 — 54 copies of the title. That shipped.
     Path(out_path).write_text(
         "WAV -> .wem encode checklist — Quotemine / archer_wows\n"
-        "=" * 54 + "\n\n"
+        + ("=" * 54) + "\n\n"
         f"mod/ holds {clip_count} real .wav clips. WoWs needs Wwise-Vorbis .wem with\n"
         "the SAME basenames (mod.xml matches files by name). Encode headlessly with\n"
         "WwiseConsole via sound2wem (github.com/EternalLeo/sound2wem) — it makes its\n"
@@ -185,7 +218,7 @@ def package(ctx):
         for game_event in pool_events.get(pid, []):
             event_routes.setdefault(game_event, []).append((pid, pool_filter.get(pid), wems))
 
-    n_events, n_slots = _build_mod_xml(event_routes, mod_dir / "mod.xml")
+    n_events, n_slots, routed = _build_mod_xml(event_routes, mod_dir / "mod.xml")
 
     ctx["downstream"].write_manifest(manifest_entries, pools, pool_events,
                                      pkg / "manifest.json")
@@ -195,6 +228,23 @@ def package(ctx):
     print(f"[package:archer_wows] {len(manifest_entries)} clips -> mod/ "
           f"({len(wems_by_pool)} pools)")
     print(f"  mod.xml: {n_events} events wired, {n_slots} <FilesList> slots filled")
+
+    # A pool whose clips route nowhere — a typo'd game_event, or a state value
+    # absent from the reference — is otherwise dropped in silence: its WAVs are
+    # still staged and still get encoded, and build_wowsmod only checks
+    # mod.xml -> wem, never wem -> mod.xml. In-game it looks identical to an
+    # event you deliberately left uncovered, so say it out loud here.
+    known = _reference_event_names()
+    stranded = sorted(set(wems_by_pool) - routed)
+    if stranded:
+        print(f"  WARNING: {len(stranded)} pool(s) produced clips that route to no "
+              f"<Path> and will NOT be heard:")
+        for pid in stranded:
+            print(f"           {pid}: {_why_stranded(pid, pool_events, known)}")
+    unknown = sorted({e for evs in pool_events.values() for e in evs} - known)
+    if unknown:
+        print(f"  WARNING: {len(unknown)} wired game_event(s) absent from "
+              f"{REFERENCE_MOD_XML.name}: {', '.join(unknown)}")
     print(f"  emitted: mod/mod.xml, manifest.json, convert_wem.txt, README.txt")
     print(f"  next: encode mod/*.wav -> .wem (see convert_wem.txt), then: "
           f"python pipeline/build_wowsmod.py --project {ctx['proj'].name} "
