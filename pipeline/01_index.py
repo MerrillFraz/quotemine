@@ -200,7 +200,7 @@ def ffprobe_duration(path: str):
 
 
 def cmd_demux(args, db):
-    wavdir = Path(args.workdir) / "wav"
+    wavdir = Path(args.proj.workdir) / "wav"
     wavdir.mkdir(parents=True, exist_ok=True)
 
     todo = pending(db, "demux")
@@ -240,7 +240,7 @@ def cmd_transcribe(args, db):
         sys.exit("CUDA not available. Fix that before starting a 50-hour job on a CPU.")
     print(f"[asr] device={device} ({torch.cuda.get_device_name(0)})")
 
-    jsondir = Path(args.workdir) / "json"
+    jsondir = Path(args.proj.workdir) / "json"
     jsondir.mkdir(parents=True, exist_ok=True)
 
     todo = [r for r in pending(db, "asr") if r["wav_path"]]

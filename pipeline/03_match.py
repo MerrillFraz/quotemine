@@ -58,7 +58,11 @@ def connect(workdir):
 def load_pools(db, pools):
     db.execute("DELETE FROM pools")
     db.execute("DELETE FROM pool_events")
-    for pid, disp, char, kw, desc, events in pools:
+    for p in pools:
+        # A pool is (pool_id, display, char, keywords, description, [events]) and
+        # MAY carry extra trailing fields (e.g. a package-time routing filter) the
+        # engine passes through untouched. Matching only needs the first six.
+        pid, disp, char, kw, desc, events = p[:6]
         db.execute("INSERT INTO pools VALUES (?,?,?,?,?)", (pid, disp, char, kw, desc))
         db.executemany("INSERT INTO pool_events VALUES (?,?)",
                        [(pid, ev) for ev in events])

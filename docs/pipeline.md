@@ -109,7 +109,10 @@ natural-language description (for semantic search), an optional suggested
 character (a hint, not a filter), and a list of real target game event IDs
 that pool is wired to. A pool maps to *multiple* game events on purpose —
 each pool becomes one Random Container downstream, wired to fire on every
-event mapped to it.
+event mapped to it. A pool may also carry an optional **7th field**, a
+state-routing filter the engine passes through untouched for `package.py` to
+use (see `tuning.md`) — how one event gets split into several context-specific
+pools.
 
 ### `match`  *(GPU once, then cached)*
 Two passes per pool:
@@ -158,6 +161,14 @@ padded preview). Positive widens, negative tightens — the fix for a clip that
 starts late or runs long, per clip, without disturbing the others. Export
 `picks.json` (carries `head_s`/`tail_s`).
 
+**Clip-uniqueness guard:** the same utterance can be a candidate in several pools
+(a "Boom!" fits both `good_hit` and `first_kill`). The board tracks keeps by
+utterance across pools and **soft-warns** on reuse — a clip kept in two pools is
+flagged, one already used elsewhere shows a "used in `<pool>`" note before you
+keep it, and the HUD shows a running unique-clip count. Nothing is blocked (you
+*can* reuse deliberately), but you can't lose track of it. Useful when a pack
+aims to never repeat a clip.
+
 ### `import <picks.json>`
 Loads the kept `(pool, utterance)` pairs — with their `head_s`/`tail_s` deltas
 (default 0) — into the `picks` table. Pre-tuning two-field files still load.
@@ -198,6 +209,33 @@ soundbank in Wwise (the one GUI/Windows step — see `WWISE.md`),
 bundles the generated `.bnk` + `audio_mods.xml` + `meta.xml` into an installable
 `res/audioww/…` tree, zipped (STORED) as `<Mod>.wotmod`. It fails loudly if a
 bank named in the descriptor is missing from `--banks`.
+
+### The other packaging pattern: WoWs state-routed overrides (`archer_wows`)
+
+A second worked example, `archer_wows`, shows a very different target. WoWs voice
+mods are **not** an event-remap + compiled bank — they're a folder of loose
+`.wem` files plus a `mod.xml` (`AudioModification.xml`) that **overrides the file
+list of the game's own containers**. You inherit Wargaming's containers, so their
+randomization, voice priority, and ducking come for free — you just supply the
+audio. Key differences from the WoT pattern:
+
+- **`package.py` clones a vendored `reference_mod.xml`** (the real event/state
+  schema, extracted from a shipping pack) and, per pool, fills only the `<Path>`
+  blocks whose states match that pool's 7th-field filter. Unmatched paths are
+  **dropped**, so uncovered states fall back to the game's default voice — a
+  partial pack is safe and silent-gap-free.
+- **Multiple voices per event** is just multiple `<File>` entries in a
+  `<FilesList>`; the game's container random-picks one. No Wwise container to
+  author.
+- **`build_wowsmod.py --project <name> --wems <dir>`** verifies every `.wem`
+  named in `mod.xml` is present, then zips the `res_mods/banks/Mods/<Mod>/` tree.
+- **The one external step is WAV→`.wem`** (Wwise Vorbis). Encode headlessly with a
+  `WwiseConsole` wrapper (e.g. `sound2wem`); the encode preserves loudness, so do
+  the loudness work in Stage 5 (`COMPRESS_VO`), not here.
+
+The generic engine is identical for both — only `config.py` (pools, optional
+state filters) and `package.py` (the deliverable layout) differ. That's the
+portability claim, demonstrated twice.
 
 ## Schema (the important tables)
 

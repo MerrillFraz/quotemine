@@ -182,6 +182,42 @@ tick, then drop a whole quarter-second, and the stop point jitters run-to-run.
 
 ---
 
+## Game-voice loudness is not broadcast loudness
+
+Finals default to `loudnorm` at −16 LUFS — a **broadcast** target. Dropped into a
+game, that voice is **inaudible under the mix** (gunfire, engines, music). Game
+voice is mastered *hot*: peaks slammed to ~0 dBFS, RMS around −10 dB. A −16 LUFS
+/ −1.5 dBTP clip is 5–7 dB quieter and leaves headroom the game's own voice
+doesn't. Symptom: "the pack fires but I can barely hear it," and turning the
+in-game Voice slider up doesn't rescue it (it raises *everything* on that bus).
+
+Two traps hide inside this:
+
+1. **`loudnorm`'s integrated LUFS is meaningless on short clips.** EBU R128
+   integrated measurement gates and needs ~3 s of audio; a 0.4 s "Nailed it."
+   reads as −28 LUFS *as an artifact*, so `loudnorm` under-processes it and
+   leaves it **peak-shy** (max −1 to −2 dBFS, not slammed to 0). A callout corpus
+   is mostly sub-3 s clips, so this hits nearly everything. `loudnorm` is the
+   wrong tool here.
+
+2. **Measuring by integrated LUFS misleads you the same way.** Compare clips with
+   a length-independent metric — `ffmpeg -af volumedetect` (mean = RMS, max =
+   peak) — not `loudnorm=print_format`.
+
+**The fix** is the `COMPRESS_VO` tuning knob (Stage 5): it swaps `loudnorm` for a
+maximizer — `highpass` → `speechnorm` (lifts the whole clip toward full scale) →
+`acompressor` → `alimiter` — that slams every clip, short or long, to ~0 dBFS
+peak with high RMS, exactly like game voice. Turn it on for any in-game VO
+target; leave it off for broadcast/soundboard output.
+
+**How to calibrate against a real target:** decode a *known-good* pack's audio
+and match its numbers. WoWs/WoT ship Wwise Vorbis `.wem` (`fmt 0xFFFF`), which
+`ffmpeg` can't read — decode with `ww2ogg` (build from source; the repo bundles
+the codebooks) then `volumedetect`. That A/B is what revealed the −16 LUFS target
+was 5–7 dB too quiet, and that the reference pack peaked at 0.0 dB on every clip.
+
+---
+
 ## Misc
 
 - **torchaudio's alignment model ignores `HF_HOME`** — it caches to

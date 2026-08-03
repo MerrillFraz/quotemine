@@ -59,6 +59,11 @@ def main():
     final_root = proj.workdir / "final"
     db.execute("DELETE FROM finals")
     done = missing = empty = 0
+    compress = t.get("COMPRESS_VO", False)
+    floor_db = t.get("VO_PEAK_FLOOR_DBFS", -2.0)
+    ceiling_db = downstream.compress_gain_ceiling_db(
+        t.get("VO_SPEECHNORM_E", 12.5), t.get("VO_MAKEUP", 3.0))
+    levels = []
     for r in picks:
         if not r["src"] or not Path(r["src"]).exists():
             print(f"  [skip] source missing for utt {r['utterance_id']}: {r['src']}")
@@ -82,10 +87,20 @@ def main():
                 empty += 1
                 continue
             downstream.clean_audio(tmp, out, lufs=t["LOUDNORM_LUFS"],
-                                   bandpass_hz=t["BANDPASS_HZ"], fade_ms=t["FADE_MS"])
+                                   bandpass_hz=t["BANDPASS_HZ"], fade_ms=t["FADE_MS"],
+                                   compress=compress,
+                                   speechnorm_e=t.get("VO_SPEECHNORM_E", 12.5),
+                                   makeup=t.get("VO_MAKEUP", 3.0))
         finally:
             if tmp.exists():
                 tmp.unlink()
+        # The COMPRESS_VO chain is open-loop: it has a finite gain ceiling and
+        # reports success whether the clip reached ~0 dBFS or landed 10 dB
+        # short. Measure so a too-quiet pack is visible here, not in-game.
+        if compress:
+            peak, mean = downstream.measure_level(out)
+            if peak is not None:
+                levels.append((peak, mean, r["pool_id"], r["utterance_id"]))
         db.execute("INSERT OR REPLACE INTO finals VALUES (?,?,?)",
                    (r["pool_id"], r["utterance_id"], str(out.relative_to(proj.workdir))))
         done += 1
@@ -93,7 +108,33 @@ def main():
     print(f"\n[clean] {done} clips cleaned into {final_root}"
           + (f"  ({missing} skipped: source missing)" if missing else "")
           + (f"  ({empty} skipped: empty span)" if empty else ""))
+    _report_levels(levels, floor_db, ceiling_db)
     db.close()
+
+
+def _report_levels(levels, floor_db, ceiling_db):
+    """Summarize measured output levels and name the clips that fell short."""
+    if not levels:
+        return
+    peaks = sorted(p for p, _, _, _ in levels)
+    means = sorted(m for _, m, _, _ in levels if m is not None)
+    med = lambda xs: xs[len(xs) // 2] if xs else float("nan")
+    print(f"[clean] measured peak: median {med(peaks):.1f} dB, "
+          f"worst {peaks[0]:.1f} dB   (RMS median {med(means):.1f} dB)")
+    print(f"[clean] COMPRESS_VO ceiling is ~{ceiling_db:.1f} dB of lift; a source "
+          f"peaking below ~{-ceiling_db:.0f} dBFS cannot reach the target.")
+    short = sorted((l for l in levels if l[0] < floor_db))
+    if not short:
+        return
+    print(f"\n[clean] WARNING: {len(short)} of {len(levels)} clips peak below "
+          f"{floor_db:.1f} dB — they will sit under the game mix:")
+    for peak, mean, pool_id, uid in short[:12]:
+        rms = f", RMS {mean:.1f}" if mean is not None else ""
+        print(f"           {peak:6.1f} dB{rms}   {pool_id}/{uid}")
+    if len(short) > 12:
+        print(f"           ... and {len(short) - 12} more")
+    print("         Re-cut these with more lead-in/lead-out, drop them, or raise "
+          "VO_SPEECHNORM_E / VO_MAKEUP (see docs/tuning.md).")
 
 
 if __name__ == "__main__":
