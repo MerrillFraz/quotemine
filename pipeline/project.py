@@ -182,6 +182,23 @@ class Project:
         return self.TUNING[key]
 
 
+def load_sibling_config(name):
+    """Import another project's config.py as a module.
+
+    For variant projects over the same corpus — e.g. per-character packs that
+    reuse the parent's parse/CHARACTERS/BANDS/POOLS verbatim and override only
+    TUNING. Configs are loaded by file path, not as a package, so a plain
+    `import` won't reach them.
+    """
+    cfg = PROJECTS_DIR / name / "config.py"
+    if not cfg.is_file():
+        raise SystemExit(f"No such project config: {cfg}")
+    spec = importlib.util.spec_from_file_location(f"config_{name}", cfg)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def load_project(name, workdir=None):
     """Load projects/<name>/config.py, validate its contract, apply defaults."""
     cfg = PROJECTS_DIR / name / "config.py"
