@@ -305,6 +305,12 @@ python pipeline/phrases.py --project archer_wot probe --character Archer
 Fan lists are a hypothesis; the transcript database is the evidence. Expect
 roughly a quarter of scraped gags to survive.
 
+`mine` and `probe` print to **stdout only** — nothing is persisted. The
+surviving phrases get hand-transcribed into the project's `_PHRASES` dict (see
+`projects/archer_wot_sterling/config.py`), and the assignment of a phrase to a
+*pool* is an editorial judgement no tool makes for you. `--emit` prints a
+paste-ready `POOL_FILTERS` skeleton to shorten the copy.
+
 ### Then the normal downstream stages
 
 Stages 3–6 run unchanged. `_print_counts` warns loudly about any pool that ends
