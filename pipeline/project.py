@@ -76,6 +76,31 @@ DEFAULT_TUNING = {
     # semantic similarity), a large bonus floats keyword hits to the top of the
     # board. Pools not listed use the global KW_BONUS.
     "POOL_KW_BONUS": {},
+    # Optional per-pool candidate filters, {pool_id: {...}}. The reserved key
+    # "*" is a project-wide default that every pool's own entry merges OVER, so
+    # a single-character pack is one line rather than one entry per pool:
+    #
+    #     "POOL_FILTERS": {"*": {"chars": ["Archer"]},
+    #                      "you_penetrated": {"phrases": ["danger zone"]}}
+    #
+    #   chars   -> list[str]; hard-restrict candidates to these characters.
+    #              Applied BEFORE the TOP_SEMANTIC cut, so a thin character
+    #              isn't crowded out of the ranking by a dominant one.
+    #   phrases -> list[str]; literal multi-word phrases matched as FTS5 phrase
+    #              queries. Unlike `keywords` (whitespace-split and OR'd, so
+    #              "danger zone" degrades to "danger" OR "zone"), these match
+    #              the words in order and adjacent.
+    "POOL_FILTERS": {},
+    # Bonus applied to a phrase hit, in place of the keyword bonus. Sized to
+    # float catchphrases above the semantic spread — same rationale as a large
+    # POOL_KW_BONUS, and it takes precedence when a line is both.
+    "PHRASE_BONUS": 0.6,
+    # Duration window for phrase hits ONLY, replacing the pool's own window.
+    # Catchphrases are routinely buried mid-utterance ("...well, just keep at
+    # it. You're not my supervisor.") and the terse CAND_MAX_S discards most of
+    # them; the audition board's lead-in/lead-out nudging is what trims them
+    # back down, so let the long ones through and edit by hand.
+    "PHRASE_WINDOW": (0.4, 8.0),
     # Stage 4 — audition
     "AUDITION_TOP_N": 25,       # candidates per pool put on the board
     "PREVIEW_EDIT_PAD_S": 1.0,  # generous preview pad; headroom for lead-in/out
@@ -145,9 +170,33 @@ class Project:
                 return name
         return None
 
+    def pool_filter(self, pool_id):
+        """Resolved POOL_FILTERS entry for one pool: the "*" project-wide
+        default with the pool's own entry merged over it. Always a dict, so
+        callers can do `.get("chars")` without guarding."""
+        f = self.TUNING.get("POOL_FILTERS") or {}
+        return {**(f.get("*") or {}), **(f.get(pool_id) or {})}
+
     def __getitem__(self, key):
         """Sugar so stages can read project['MAX_SPEAKERS']."""
         return self.TUNING[key]
+
+
+def load_sibling_config(name):
+    """Import another project's config.py as a module.
+
+    For variant projects over the same corpus — e.g. per-character packs that
+    reuse the parent's parse/CHARACTERS/BANDS/POOLS verbatim and override only
+    TUNING. Configs are loaded by file path, not as a package, so a plain
+    `import` won't reach them.
+    """
+    cfg = PROJECTS_DIR / name / "config.py"
+    if not cfg.is_file():
+        raise SystemExit(f"No such project config: {cfg}")
+    spec = importlib.util.spec_from_file_location(f"config_{name}", cfg)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def load_project(name, workdir=None):

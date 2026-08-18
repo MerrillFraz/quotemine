@@ -221,10 +221,13 @@ AUDITION_HTML = r"""<!doctype html>
   .warn{color:#e88a3f;font-size:11px}
   .usedhint{color:#7a7460;font-size:11px}
   .cfchip{color:#e88a3f;font-weight:bold}.uniqchip b{color:#7fd0ff}
+  /* catchphrase hit: a literal phrase match, floated to the top by PHRASE_BONUS */
+  .gag{color:#d99be0;font-weight:bold}
 </style>
 <h1>AUDITION</h1>
 <div class="sub">One row per ranked candidate, grouped by pool (blue headers). Play a line and <b>Keep</b> the ones you want in the pack;
-leave the rest. A <span class="star">&#9733;</span> marks a keyword hit. On a kept line, nudge <b>lead-in</b> / <b>lead-out</b>
+leave the rest. A <span class="star">&#9733;</span> marks a keyword hit, a <span class="gag">&#9834;</span> a catchphrase hit
+(these sort to the top of their pool and are often buried in a longer line — trim with lead-in/lead-out). On a kept line, nudge <b>lead-in</b> / <b>lead-out</b>
 (each &plusmn;__STEP__s per click; may go negative to tighten) and hit <b>&#9654;</b> to hear just that window — it exports with the pick
 and Stage 5 cuts to it. Each clip should be used <b>once</b>: keeping the same line in two pools is flagged <span class="warn">&#9888; in orange</span>,
 and a line already used elsewhere shows a <span class="usedhint">grey note</span> before you keep it. Export picks.json when done, then run <code>04_audition import</code>.</div>
@@ -285,12 +288,13 @@ function render(){
     shown++;
     const tr=document.createElement("tr"); tr.className=conflict?"kept conflict":(on?"kept":"");
     const star=r.kw?` <span class="star">&#9733;</span>`:"";
+    const gag=r.ph?` <span class="gag">&#9834;</span>`:"";
     const dis=on?"":" disabled";
     const roset=(on&&(o.h||o.t))?" set":"";
     const roTxt=on?`in ${fmt(o.h)} / out ${fmt(o.t)}`:"in +0.00 / out +0.00";
     tr.innerHTML=`<td><button class="k ${on?"on":""}" data-k="${key}">${on?"kept":"keep"}</button></td>`
       +`<td><audio controls preload="none" src="${r.preview}"></audio></td>`
-      +`<td class="txt">${(r.text||"").replace(/</g,"&lt;").slice(0,140)}<div class="who">${r.character} &middot; ${r.duration_s.toFixed(1)}s &middot; <span class="sc">sem ${r.sem.toFixed(2)}</span>${star}${flag}</div></td>`
+      +`<td class="txt">${(r.text||"").replace(/</g,"&lt;").slice(0,140)}<div class="who">${r.character} &middot; ${r.duration_s.toFixed(1)}s &middot; <span class="sc">sem ${r.sem.toFixed(2)}</span>${star}${gag}${flag}</div></td>`
       +`<td class="tune">`
         +`<button class="nb" data-k="${key}" data-e="h" data-d="-1"${dis}>in&minus;</button>`
         +`<button class="nb" data-k="${key}" data-e="h" data-d="1"${dis}>in+</button>`

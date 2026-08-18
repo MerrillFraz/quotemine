@@ -10,19 +10,37 @@ deliverable. Six stages (three GPU) + human tagging + human audition.
   failure, torch-first install, per-utterance (not clip) tagging.
 - `docs/pipeline.md` — stage walkthrough + schema.
 - `docs/tuning.md` — every knob and its re-run cost.
+- `docs/backlog.md` — open problems and forward-looking work. Read before
+  touching WoWs packaging: the unresolved in-game loudness bug is logged there
+  with what's already been ruled out, so it doesn't get re-derived.
+
+## Plan Mode
+
+When writing a plan, always specify:
+- The exact file paths that will be touched
+- The order in which they'll be modified
+- Which changes are independent vs. which depend on a prior step completing
+
+Do not proceed to execution until the plan lists files and sequence explicitly.
 
 ## Stage scripts (run in order)
-Every stage takes `--project <name>` (default `archer_wot`), resolved against
-`projects/<name>/config.py`. See `pipeline/project.py` for the contract.
-- `pipeline/01_index.py`  — demux, transcribe, diarize, index  [GPU]
-- `pipeline/02_identify.py` — tag → centroids → assign          [GPU + human]
-- `pipeline/03_match.py`  — keyword + semantic event matching   [GPU]
-- `pipeline/04_audition.py` — audition + per-clip lead-in/out tuning → picks [human]
-- `pipeline/05_clean.py`  — re-cut finals from source, loudnorm/fades [CPU]
-- `pipeline/06_package.py` — assemble clips + manifest (project hook)  [CPU]
+Stages are `pipeline/0N_*.py`, run in numeric order; see the stage table in
+`README.md` and `pipeline/project.py` for the `--project` contract.
 
 Stages 4–6 share `pipeline/downstream.py` (clip cutting, cleaning, board,
 manifest helpers). They need ffmpeg, not the GPU.
+
+## Variant packs over an already-mined corpus (no GPU)
+- `pipeline/fork_corpus.py --from A --to B` — copy `corpus.db`, clear only the
+  project layer (`pools`, `pool_events`, `pool_candidates`, `picks`, `finals`).
+  Keeps transcripts, human tagging, and the `text_emb` cache. Audio is *shared*
+  (absolute `episodes.wav_path`), so a fork is ~80 MB, not ~6 GB — and it
+  depends on its parent's `work/` for Stage 4 previews.
+- `pipeline/phrases.py scrape|mine|probe` — build catchphrase lists from an
+  episode wiki's "Running Gags" sections. Always `probe` before shipping a list:
+  fan lists are a hypothesis, the transcript DB is the evidence.
+- `projects/archer_wot_sterling/` — worked example: same corpus, same 17 WoT
+  events as `archer_wot`, restricted to one character via `POOL_FILTERS`.
 
 ## Project vs. engine (portability)
 - The stages are generic. Everything specific to a corpus — filename parsing,
@@ -46,6 +64,14 @@ manifest helpers). They need ffmpeg, not the GPU.
   `archer_wows/package.py` clones a reference `mod.xml` and state-routes each pool
   (via `pipeline/build_wowsmod.py`). Both compose `pipeline/downstream.py` helpers
   rather than reinventing them.
+- **Shared target layout lives in the engine, identity lives in the project.**
+  `pipeline/build_wotpack.py` holds the whole WoT emitter; a project's
+  `package.py` is an `Identity` (mod id, bank name, display name) plus a
+  `build()` call. Adding a WoT pack should never mean copying that emitter.
+- **A project may restrict candidates by character** via the `POOL_FILTERS`
+  tuning knob (`{"*": {"chars": [...]}, "<pool>": {"phrases": [...]}}`). Note
+  `suggested_char` (POOLS field 3) is display metadata and is *never* a filter —
+  that contract is unchanged and `archer_wows` depends on it.
 
 ## Conventions
 - Each project reads/writes one SQLite DB: `work/<project>/corpus.db`.
@@ -75,48 +101,3 @@ manifest helpers). They need ffmpeg, not the GPU.
   ignores HTTP Range, so the browser can't seek and the board's lead-in ▶
   silently does nothing (the lead-out still works, which hides it). Use
   `pipeline/04_audition.py --project <name> serve` (Range-capable).
-
-## Backlog
-
-### Open: the WoWs pack is too quiet in-game (unresolved)
-The `archer_wows` pack was built end-to-end and installed, and the lines are too
-quiet to be usable under the game mix. **Not yet root-caused.** What's already
-been ruled in or out, so it doesn't get re-derived:
-
-- **Stage 5 output is NOT the problem.** Sampled 20 of the 282 shipped finals:
-  every clip peaks at **0.0 dBFS**, RMS −9.8 to −14.5 (**median −11.8**). The
-  game-VO target from `docs/gotchas.md` is peak ~0 / RMS ~−10. So the WAVs are
-  on target within ~2 dB, and the level is lost *downstream of Stage 5*.
-- **The encode CLI isn't attenuating.** WoWs used the headless
-  `sound2wem`/WwiseConsole path (**not** the Wwise GUI used for WoT):
-  `zSound2wem.cmd --channels:1 --audioformats:wav --conversion:"Vorbis Quality High"`,
-  with `--volume` and `--extra` both blank — no gain change, no `loudnorm`.
-- **`COMPRESS_VO`'s finite gain ceiling is real but is a different bug.** It
-  can't lift a source peaking below ~−31 dBFS to target, and used to fail
-  silently; Stage 5 now measures every compressed clip and warns
-  (`VO_PEAK_FLOOR_DBFS`). None of the shipped clips actually hit that ceiling.
-
-Prime suspect: **`sound2wem` embeds its own Wwise project**
-(`sound2wem/wavtowemscript/`), and Wwise applies that project's Conversion
-Settings + Actor-Mixer properties on every encode. Wwise's per-object *Loudness
-Normalization* targets −23 LUFS, which would gut short callouts exactly this
-way. Check `Conversion Settings/` and `Actor-Mixer Hierarchy/Default Work
-Unit.wwu` for `EnableLoudnessNormalization`, make-up gain, and volume offsets.
-
-Decisive test: build `ww2ogg` (+`revorb`), decode one shipped `.wem` from
-`work/archer_wows/dist/Archer.zip`, and measure it against its source
-`final/**/<uid>_*.wav`. Equal ⇒ the encode is innocent and it's a game-side
-bus/priority issue; quieter ⇒ it's the Wwise project settings.
-
-### Forward-looking, not committed — distribution/UX polish, its own branch:
-- **Unified `quotemine` CLI + `pyproject.toml`** — console entry points so stages
-  run as `quotemine audition sample …` instead of `python pipeline/04_…`.
-  Source/editable install with documented torch-first setup; NOT a PyPI
-  `pip install` (the GPU/torch/pyannote deps won't resolve cleanly) and NOT a
-  frozen binary (wrong for a CUDA ML pipeline). Highest-leverage win.
-- **README quickstart** — six-stage end-to-end walkthrough that surfaces the top
-  gotchas up front (torch-first, pyannote token, MAX_SPEAKERS).
-- **`quotemine new <name>` scaffolder** — copy `projects/_template/` to start a
-  new corpus.
-- **Orchestration helper** (`quotemine run --project X`) — run the automated
-  stages in order, stopping with a clear prompt at the human audition step.

@@ -1,0 +1,42 @@
+# Generic conversational filler, excluded from catchphrase phrase lists.
+#
+# A fan wiki will legitimately list these as "running gags" — and they ARE, in
+# the show. But as FTS search keys they are far too common in ordinary dialogue
+# to be useful: measured against the Archer corpus, "shut up" hits 206 times,
+# "hang on" 97, "hello" 53. At PHRASE_BONUS those would outrank every real
+# catchphrase and fill all 17 pools with filler.
+#
+# The test for this list is not "is it a catchphrase?" but "would matching it
+# return mostly ordinary dialogue?". One phrase per line; blank lines and
+# #-comments ignored; matched after normalize_phrase() so case and punctuation
+# don't matter.
+
+shut up
+hang on
+hello
+hi
+yes
+yeah
+no
+nope
+what
+why
+who
+how
+okay
+ok
+oh god
+oh my god
+my god
+jesus
+come on
+sorry
+i'm sorry
+wait
+what the hell
+seriously
+me too
+whatever
+seriously though
+right
+seriously what

@@ -218,6 +218,42 @@ was 5–7 dB too quiet, and that the reference pack peaked at 0.0 dB on every cl
 
 ---
 
+## Character packs: three ways to silently ship the wrong thing
+
+All three were hit while building `archer_wot_sterling`, and each fails quietly —
+you get a pack, it just isn't the one you wanted.
+
+### The default candidate window throws catchphrases away
+`CAND_MAX_S` is 2.2 s, tuned for terse battle callouts. But catchphrases are
+routinely buried mid-utterance — *"...well, just keep at it. You're not my
+supervisor."* — so that window discards **53–78 %** of them (`shitsnacks` 2 of 9
+survive, `sploosh` 6 of 16). This is why phrase hits get their own
+`PHRASE_WINDOW` (0.4–8.0 s) instead of the pool's, and why you then trim them by
+hand on the board. If a catchphrase you know exists isn't showing up, check the
+window before you suspect the transcript.
+
+### Character-filter BEFORE the top-N cut, never after
+`window_positions()` takes the character filter for a reason. Rank first and
+filter after, and a lead character swamps the ranking — Archer is 42 % of all
+attributed lines, so the global top 60 is nearly all him and a Pam pack comes
+back almost empty. There's a test pinning this (`test_window_positions_*`).
+
+### Neither the wiki nor raw corpus counts tell you who says a line
+Wiki attributions frequently name the person being spoken *to* (the Archer wiki
+credits "sploosh" to Lana). The obvious fix — believe the corpus — is worse:
+counting raw hits credits Archer with "get some", "idiot", "burn" and "chet",
+because he simply talks more than everyone else. Attribute by **rate**, hits
+divided by that character's share of the corpus; that recovers Pam, Malory,
+Cheryl and Cyril. `phrases.py probe` does this and prints "said more by X" when
+its answer disagrees with the wiki's, so the disagreements stay visible.
+
+Related: a scraped "running gag" is often a *thematic* gag ("Coconut butter",
+"Punny names") rather than a quotable line. Those harmlessly score zero corpus
+hits and drop out — but generic filler ("shut up", 206 hits) does **not**, and
+needs the stoplist.
+
+---
+
 ## Misc
 
 - **torchaudio's alignment model ignores `HF_HOME`** — it caches to

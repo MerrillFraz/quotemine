@@ -128,3 +128,53 @@ def test_template_has_empty_roster():
     # The template is intentionally not runnable until a roster is added.
     with pytest.raises(SystemExit):
         proj_mod.load_project("_template")
+
+
+# --- POOL_FILTERS: "*" wildcard merged under each pool's own entry -----------
+
+def _filters(tuning):
+    return proj_mod.Project("x", make_module(TUNING=tuning), Path("/tmp/x"))
+
+
+def test_pool_filter_empty_by_default():
+    assert _filters({}).pool_filter("any_pool") == {}
+
+
+def test_pool_filter_applies_wildcard_to_every_pool():
+    p = _filters({"POOL_FILTERS": {"*": {"chars": ["Archer"]}}})
+    assert p.pool_filter("battle_start") == {"chars": ["Archer"]}
+    assert p.pool_filter("anything_else") == {"chars": ["Archer"]}
+
+
+def test_pool_filter_merges_pool_entry_over_wildcard():
+    # A character pack sets chars once via "*" and adds phrases per pool; the
+    # per-pool entry must NOT drop the inherited character restriction.
+    p = _filters({"POOL_FILTERS": {
+        "*": {"chars": ["Archer"]},
+        "battle_start": {"phrases": ["danger zone"]},
+    }})
+    assert p.pool_filter("battle_start") == {
+        "chars": ["Archer"], "phrases": ["danger zone"]}
+
+
+def test_pool_filter_pool_entry_can_override_wildcard():
+    p = _filters({"POOL_FILTERS": {
+        "*": {"chars": ["Archer"]},
+        "team_kill": {"chars": ["Pam"]},
+    }})
+    assert p.pool_filter("team_kill") == {"chars": ["Pam"]}
+
+
+def test_pool_filter_without_wildcard_is_per_pool_only():
+    p = _filters({"POOL_FILTERS": {"a": {"chars": ["Pam"]}}})
+    assert p.pool_filter("a") == {"chars": ["Pam"]}
+    assert p.pool_filter("b") == {}
+
+
+# --- new tuning defaults are inert for existing projects --------------------
+
+def test_phrase_defaults_are_no_ops():
+    p = _filters({})
+    assert p["POOL_FILTERS"] == {}
+    assert p["PHRASE_WINDOW"] == (0.4, 8.0)
+    assert p["PHRASE_BONUS"] > p["KW_BONUS"]
